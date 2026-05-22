@@ -63,7 +63,7 @@ export const testPlanOutputSchema = z.object({
 export const playwrightTestOutputSchema = z.object({
   testName: z.string(),
   testCode: z.string(),
-  locators: z.array(z.string()),
+  locators: z.array(z.string()).optional().default([]),
 });
 
 export const failureAnalysisOutputSchema = z.object({
