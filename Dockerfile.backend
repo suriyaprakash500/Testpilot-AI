@@ -1,0 +1,32 @@
+FROM node:22-slim AS base
+RUN corepack enable pnpm
+
+WORKDIR /app
+
+# Install dependencies
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml* ./
+COPY packages/types/package.json ./packages/types/
+COPY packages/shared/package.json ./packages/shared/
+COPY packages/database/package.json ./packages/database/
+COPY packages/queue/package.json ./packages/queue/
+COPY packages/prompt-engine/package.json ./packages/prompt-engine/
+COPY packages/agents/package.json ./packages/agents/
+COPY packages/playwright-engine/package.json ./packages/playwright-engine/
+COPY packages/github-engine/package.json ./packages/github-engine/
+COPY packages/reporting/package.json ./packages/reporting/
+COPY apps/backend/package.json ./apps/backend/
+
+RUN pnpm install --frozen-lockfile
+
+# Copy source and build
+COPY tsconfig.base.json ./
+COPY packages/ ./packages/
+COPY apps/backend/ ./apps/backend/
+
+RUN pnpm -r run build
+
+# Install Playwright browsers
+RUN npx playwright install --with-deps chromium
+
+EXPOSE 3001
+CMD ["node", "apps/backend/dist/index.js"]

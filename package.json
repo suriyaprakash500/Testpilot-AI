@@ -1,0 +1,26 @@
+{
+  "name": "testpilot-ai",
+  "private": true,
+  "version": "0.1.0",
+  "description": "AI-powered automated testing platform",
+  "scripts": {
+    "dev": "pnpm -r --parallel run dev",
+    "dev:backend": "pnpm --filter @testpilot/backend dev",
+    "dev:frontend": "pnpm --filter @testpilot/frontend dev",
+    "build": "pnpm -r run build",
+    "typecheck": "pnpm -r run typecheck",
+    "lint": "pnpm -r run lint",
+    "db:generate": "pnpm --filter @testpilot/database generate",
+    "db:migrate": "pnpm --filter @testpilot/database migrate",
+    "clean": "pnpm -r run clean"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0",
+    "prettier": "^3.4.0"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=9.0.0"
+  },
+  "packageManager": "pnpm@9.15.0"
+}
