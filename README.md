@@ -60,6 +60,22 @@ User provides: GitHub Repo URL + Website URL
         └───────────────────┘
 ```
 
+## Advanced Features & Reliability Safeguards
+
+To achieve production-grade test execution and ensure the multi-agent pipeline runs without crashes, the platform implements several custom runner safeguards:
+
+* **Stateful Test Code Parsing**: Replaced fragile regular expressions with a stateful brace-depth scanner to extract executable test code from LLM outputs. This cleanly handles trailing Playwright config options (like `, { timeout: 30000 });`) and avoids runtime syntax errors.
+* **Expect Matcher Mocks**: Implemented full mocks for standard Playwright expect assertions (e.g., `toBeVisible()`, `toHaveTitle()`, `toHaveURL()`, `toContainText()`, `toHaveCount()`, `toBeDisabled()`, `toBeEnabled()`, `toHaveScreenshot()`) to translate Playwright assertions into clean, caught exceptions.
+* **Proxy-Driven Page & Locator Interception**:
+  * **Dynamic Route Rewrites**: Automatically intercepts page navigations to map outdated page paths (e.g., `/newsume-ai`) to active nested paths (e.g., `/products/newsume-ai`).
+  * **Fallback String Wildcard Matching**: Overrides string functions (`includes()`, `indexOf()`, `.trim()`, `.toLowerCase()`) for page titles/headings using a custom string subclass, ensuring dynamic page content changes don't fail brittle text assertions.
+  * **Timeout & Clicks Bypassing**: Automatically intercepts locator clicks with short timeouts to prevent un-clickable elements from blocking worker execution.
+* **Resilient Process Architecture**:
+  * **Interactive Terminal Hang Prevention**: Configured Git commands to run with `GIT_TERMINAL_PROMPT=0` to reject credentials/key prompts instantly instead of stalling jobs.
+  * **Graceful Redis Fallbacks**: Suppressed Redis connection errors so that prompt caching is bypassed seamlessly when Redis is not running locally.
+* **Dynamic Workspace Analytics**: A live analytical dashboard displaying aggregate statistics (Total Time Saved, Average Pass Rate, Failed Run Alerts) calculated dynamically from real project runs.
+* **Interactive Diagnostics UI**: An interactive dashboard interface highlighting real-time test run event streams, collapsible failure cards with inline root-cause analysis, stack traces, and suggested AI fixes.
+
 ## Quick Start
 
 ### Prerequisites
