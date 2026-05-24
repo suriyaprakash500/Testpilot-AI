@@ -106,7 +106,7 @@ export default function AnalyticsPage() {
                 {data.averagePassRate}%
               </h3>
             </div>
-            <div className="p-2 rounded-lg" style={{ background: "rgba(34,197,94,0.1)" }}>
+            <div className="p-2 rounded-lg border" style={{ background: "rgba(16,185,129,0.06)", borderColor: "rgba(16,185,129,0.15)" }}>
               <CheckCircle size={20} style={{ color: "var(--success)" }} />
             </div>
           </div>
@@ -123,7 +123,7 @@ export default function AnalyticsPage() {
                 {formatTimeSaved(data.totalTimeSavedMs)}
               </h3>
             </div>
-            <div className="p-2 rounded-lg" style={{ background: "rgba(99,102,241,0.1)" }}>
+            <div className="p-2 rounded-lg border" style={{ background: "var(--accent-glow)", borderColor: "rgba(139,92,246,0.15)" }}>
               <TrendingUp size={20} style={{ color: "var(--accent)" }} />
             </div>
           </div>
@@ -140,7 +140,7 @@ export default function AnalyticsPage() {
                 {data.failedRunAlerts}
               </h3>
             </div>
-            <div className="p-2 rounded-lg" style={{ background: "rgba(239,68,68,0.1)" }}>
+            <div className="p-2 rounded-lg border" style={{ background: "rgba(244,63,94,0.06)", borderColor: "rgba(244,63,94,0.15)" }}>
               <ShieldAlert size={20} style={{ color: "var(--error)" }} />
             </div>
           </div>

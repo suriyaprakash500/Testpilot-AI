@@ -10,6 +10,8 @@ import { createLogger } from "@testpilot/shared";
 const logger = createLogger("test-run-routes");
 const router: Router = Router();
 
+const isUuid = (str: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
+
 /**
  * Helper to trigger a test run for a project
  */
@@ -93,6 +95,9 @@ export async function triggerTestRun(projectId: string, triggerType: "manual" | 
 router.post("/:projectId/start", requireAuth, async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const projectId = req.params["projectId"] as string;
+    if (!isUuid(projectId)) {
+      throw new NotFoundError("Project", projectId);
+    }
 
     const runId = await triggerTestRun(projectId, "manual");
 
@@ -111,8 +116,12 @@ router.post("/:projectId/start", requireAuth, async (req: AuthRequest, res: Resp
  */
 router.get("/:projectId", requireAuth, async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const db = getDb();
     const projectId = req.params["projectId"] as string;
+    if (!isUuid(projectId)) {
+      throw new NotFoundError("Project", projectId);
+    }
+
+    const db = getDb();
     const runs = await db
       .select()
       .from(testRuns)
@@ -131,9 +140,12 @@ router.get("/:projectId", requireAuth, async (req: AuthRequest, res: Response, n
  */
 router.get("/run/:runId", requireAuth, async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const db = getDb();
     const runId = req.params["runId"] as string;
+    if (!isUuid(runId)) {
+      throw new NotFoundError("TestRun", runId);
+    }
 
+    const db = getDb();
     const [run] = await db.select().from(testRuns).where(eq(testRuns.id, runId));
     if (!run) throw new NotFoundError("TestRun", runId);
 
@@ -165,7 +177,9 @@ router.get("/run/:runId", requireAuth, async (req: AuthRequest, res: Response, n
         duration: tc.durationMs || 0,
         error: tc.errorMessage,
         logs: aiLogs || null,
-        screenshotUrl: tc.screenshotPath ? `/api/artifacts/${tc.screenshotPath}` : null,
+        screenshotUrl: tc.screenshotPath 
+          ? `${process.env["BACKEND_URL"] || "http://localhost:3001"}/api/artifacts/${tc.screenshotPath.replace(/\\/g, "/")}` 
+          : null,
         createdAt: tc.createdAt,
       };
     });
@@ -182,9 +196,12 @@ router.get("/run/:runId", requireAuth, async (req: AuthRequest, res: Response, n
  */
 router.delete("/run/:runId", requireAuth, async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const db = getDb();
     const runId = req.params["runId"] as string;
+    if (!isUuid(runId)) {
+      throw new NotFoundError("TestRun", runId);
+    }
 
+    const db = getDb();
     const [run] = await db
       .select()
       .from(testRuns)

@@ -1,12 +1,14 @@
 import { Router, type Response, type NextFunction } from "express";
 import { createProjectSchema } from "@testpilot/types";
-import { getDb, projects, eq, testRuns, testCases, inArray, desc } from "@testpilot/database";
+import { getDb, projects, eq, testRuns, testCases, inArray, desc, and, repositories } from "@testpilot/database";
 
 
 import { requireAuth, type AuthRequest } from "../middleware/auth.js";
 import { NotFoundError } from "@testpilot/shared";
 
 const router: Router = Router();
+
+const isUuid = (str: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
 
 /**
  * POST /api/projects
@@ -191,9 +193,236 @@ router.get("/analytics", requireAuth, async (req: AuthRequest, res: Response, ne
         totalTimeSavedMs,
         failedRunAlerts,
         projects: projectStats,
-        recentRuns: recentRunsDetails
+        recentRuns: recentRunsDetails,
+        totalRuns: runs.length,
+        totalCases: cases.length
       }
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /api/projects/active-agents
+ * Get active status of agents based on running test runs in database
+ */
+router.get("/active-agents", requireAuth, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const db = getDb();
+    
+    // Find any runs that are not completed, failed, or cancelled
+    const activeRuns = await db
+      .select()
+      .from(testRuns)
+      .where(inArray(testRuns.status, ["pending", "analyzing", "planning", "generating", "executing", "analyzing_failures", "reporting"]));
+    
+    // Determine active agent based on statuses of active runs
+    const statuses = activeRuns.map(r => r.status);
+    
+    res.json({
+      success: true,
+      data: {
+        repoAnalysis: statuses.includes("analyzing"),
+        testPlanning: statuses.includes("planning"),
+        playwrightGen: statuses.includes("generating"),
+        browserExecution: statuses.includes("executing"),
+        failureAnalysis: statuses.includes("analyzing_failures"),
+        githubIntegration: statuses.includes("reporting") || statuses.includes("pending"),
+      }
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /api/projects/pipelines
+ * Get latest execution statuses for each pipeline type (manual, webhook, schedule)
+ */
+router.get("/pipelines", requireAuth, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const db = getDb();
+    
+    // Get user projects
+    const userProjects = await db
+      .select()
+      .from(projects)
+      .where(eq(projects.userId, req.userId!));
+      
+    if (userProjects.length === 0) {
+      return res.json({ 
+        success: true, 
+        data: { manual: null, webhook: null, schedule: null } 
+      });
+    }
+    
+    const projectIds = userProjects.map((p) => p.id);
+    
+    // Get latest run of each trigger type (manual, webhook, schedule)
+    const latestManual = await db
+      .select()
+      .from(testRuns)
+      .where(and(inArray(testRuns.projectId, projectIds), eq(testRuns.trigger, "manual")))
+      .orderBy(desc(testRuns.createdAt))
+      .limit(1);
+      
+    const latestWebhook = await db
+      .select()
+      .from(testRuns)
+      .where(and(inArray(testRuns.projectId, projectIds), eq(testRuns.trigger, "webhook")))
+      .orderBy(desc(testRuns.createdAt))
+      .limit(1);
+      
+    const latestSchedule = await db
+      .select()
+      .from(testRuns)
+      .where(and(inArray(testRuns.projectId, projectIds), eq(testRuns.trigger, "schedule")))
+      .orderBy(desc(testRuns.createdAt))
+      .limit(1);
+
+    const getRunDetails = async (run: any) => {
+      if (!run) return null;
+      
+      const cases = await db
+        .select()
+        .from(testCases)
+        .where(eq(testCases.testRunId, run.id));
+        
+      return {
+        id: run.id,
+        status: run.status,
+        createdAt: run.createdAt,
+        completedAt: run.completedAt,
+        casesCount: cases.length,
+        passedCount: cases.filter(c => c.status === "passed").length,
+        failedCount: cases.filter(c => c.status === "failed").length
+      };
+    };
+
+    res.json({
+      success: true,
+      data: {
+        manual: await getRunDetails(latestManual[0]),
+        webhook: await getRunDetails(latestWebhook[0]),
+        schedule: await getRunDetails(latestSchedule[0])
+      }
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /api/projects/active-session
+ * Get active run session details if any run is currently executing
+ */
+router.get("/active-session", requireAuth, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const db = getDb();
+    
+    // Get user projects
+    const userProjects = await db
+      .select()
+      .from(projects)
+      .where(eq(projects.userId, req.userId!));
+      
+    if (userProjects.length === 0) {
+      return res.json({ success: true, data: null });
+    }
+    
+    const projectIds = userProjects.map((p) => p.id);
+    
+    // Find the most recent active run (status other than completed, failed, cancelled)
+    const [activeRun] = await db
+      .select()
+      .from(testRuns)
+      .where(and(
+        inArray(testRuns.projectId, projectIds),
+        inArray(testRuns.status, ["pending", "analyzing", "planning", "generating", "executing", "analyzing_failures", "reporting"])
+      ))
+      .orderBy(desc(testRuns.createdAt))
+      .limit(1);
+      
+    if (!activeRun) {
+      return res.json({ success: true, data: null });
+    }
+    
+    const project = userProjects.find(p => p.id === activeRun.projectId);
+    
+    // Find the latest test case for this run
+    const [latestCase] = await db
+      .select()
+      .from(testCases)
+      .where(eq(testCases.testRunId, activeRun.id))
+      .orderBy(desc(testCases.createdAt))
+      .limit(1);
+      
+    res.json({
+      success: true,
+      data: {
+        runId: activeRun.id,
+        status: activeRun.status,
+        projectName: project ? project.name : "Unknown",
+        websiteUrl: project ? project.websiteUrl : "about:blank",
+        testCaseName: latestCase ? latestCase.name : "Evaluating repository diffs..."
+      }
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /api/projects/repositories
+ * List all connected codebases/repositories with framework and scan details
+ */
+router.get("/repositories", requireAuth, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const db = getDb();
+    
+    // Get user projects
+    const userProjects = await db
+      .select()
+      .from(projects)
+      .where(eq(projects.userId, req.userId!));
+      
+    if (userProjects.length === 0) {
+      return res.json({ success: true, data: [] });
+    }
+    
+    const projectIds = userProjects.map((p) => p.id);
+    
+    // Get corresponding repository records
+    const repoRecords = await db
+      .select()
+      .from(repositories)
+      .where(inArray(repositories.projectId, projectIds));
+      
+    const data = userProjects.map((project) => {
+      const repo = repoRecords.find(r => r.projectId === project.id);
+      
+      // Parse git repo name/domain from URL
+      let repoName = project.repoUrl;
+      try {
+        const cleanUrl = project.repoUrl.replace(/^(https?:\/\/)?(www\.)?/, "");
+        repoName = cleanUrl;
+      } catch {
+        // ignore
+      }
+
+      return {
+        projectId: project.id,
+        repoUrl: project.repoUrl,
+        repoName: repoName,
+        projectName: project.name,
+        framework: repo ? repo.framework : "unknown",
+        language: repo ? repo.language : "unknown",
+        analyzedAt: repo ? repo.analyzedAt : null,
+      };
+    });
+
+    res.json({ success: true, data });
   } catch (err) {
     next(err);
   }
@@ -205,8 +434,12 @@ router.get("/analytics", requireAuth, async (req: AuthRequest, res: Response, ne
  */
 router.get("/:id", requireAuth, async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const db = getDb();
     const id = req.params["id"] as string;
+    if (!isUuid(id)) {
+      throw new NotFoundError("Project", id);
+    }
+
+    const db = getDb();
     const [project] = await db
       .select()
       .from(projects)
@@ -226,8 +459,12 @@ router.get("/:id", requireAuth, async (req: AuthRequest, res: Response, next: Ne
  */
 router.delete("/:id", requireAuth, async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const db = getDb();
     const id = req.params["id"] as string;
+    if (!isUuid(id)) {
+      throw new NotFoundError("Project", id);
+    }
+
+    const db = getDb();
     const [deleted] = await db
       .delete(projects)
       .where(eq(projects.id, id))

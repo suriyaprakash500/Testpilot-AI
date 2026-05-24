@@ -1,24 +1,26 @@
 @import "tailwindcss";
 
 :root {
-  --bg-primary: #09090b;
-  --bg-secondary: #18181b;
-  --bg-tertiary: #27272a;
-  --bg-card: #1c1c1f;
-  --bg-hover: #2a2a2e;
-  --border: #2e2e32;
-  --border-hover: #3f3f46;
-  --text-primary: #fafafa;
-  --text-secondary: #a1a1aa;
-  --text-muted: #71717a;
-  --accent: #6366f1;
-  --accent-hover: #818cf8;
-  --accent-glow: rgba(99, 102, 241, 0.15);
-  --success: #22c55e;
-  --error: #ef4444;
+  --bg-primary: #070B14;
+  --bg-secondary: #0b0f19;
+  --bg-tertiary: #111827;
+  --bg-card: rgba(15, 23, 42, 0.65);
+  --bg-hover: rgba(99, 102, 241, 0.08);
+  --border: rgba(99, 102, 241, 0.08);
+  --border-hover: rgba(99, 102, 241, 0.25);
+  --accent-purple: #8B5CF6;
+  --accent-indigo: #6366F1;
+  --accent-blue: #3B82F6;
+  --accent: #8b5cf6;
+  --accent-hover: #a78bfa;
+  --accent-glow: rgba(139, 92, 246, 0.1);
+  --success: #10B981;
+  --error: #EF4444;
   --warning: #f59e0b;
-  --gradient-1: linear-gradient(135deg, #6366f1, #8b5cf6, #a78bfa);
-  --gradient-2: linear-gradient(135deg, #06b6d4, #6366f1);
+  --text-primary: #F8FAFC;
+  --text-secondary: #94A3B8;
+  --text-muted: #64748B;
+  
   --radius: 12px;
   --radius-sm: 8px;
   --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -43,80 +45,145 @@ body {
   color: var(--text-primary);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  background-image: 
+    radial-gradient(at 0% 0%, rgba(99, 102, 241, 0.03) 0, transparent 50%), 
+    radial-gradient(at 50% 0%, rgba(139, 92, 246, 0.02) 0, transparent 50%),
+    radial-gradient(at 100% 0%, rgba(59, 130, 246, 0.03) 0, transparent 50%);
+  background-attachment: fixed;
 }
 
 /* Scrollbar */
-::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--border-hover); }
 
-/* Glass card effect */
+/* Glass panel */
 .glass {
-  background: rgba(28, 28, 31, 0.7);
-  backdrop-filter: blur(12px);
+  background: var(--bg-card);
+  backdrop-filter: blur(16px);
   border: 1px solid var(--border);
   border-radius: var(--radius);
+  box-shadow: 0 4px 30px rgba(0, 0, 0, 0.35);
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.glass:hover {
+  border-color: var(--border-hover);
+  box-shadow: 0 4px 30px rgba(99, 102, 241, 0.02), 0 0 25px rgba(139, 92, 246, 0.03);
 }
 
 /* Gradient text */
 .gradient-text {
-  background: var(--gradient-1);
+  background: linear-gradient(135deg, var(--text-primary), var(--text-secondary));
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
 }
 
-/* Pulse dot animation */
-@keyframes pulse-dot {
+.gradient-accent {
+  background: linear-gradient(135deg, var(--accent-indigo), var(--accent-purple));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* Neon glow classes */
+.neon-glow-purple {
+  box-shadow: 0 0 20px rgba(139, 92, 246, 0.15);
+}
+.neon-glow-indigo {
+  box-shadow: 0 0 20px rgba(99, 102, 241, 0.15);
+}
+.neon-glow-blue {
+  box-shadow: 0 0 20px rgba(59, 130, 246, 0.15);
+}
+
+/* Pulsing Active State */
+@keyframes pulse-ring {
+  0% { transform: scale(0.95); opacity: 0.8; box-shadow: 0 0 0 0 rgba(139, 92, 246, 0.4); }
+  70% { transform: scale(1.1); opacity: 0; box-shadow: 0 0 0 8px rgba(139, 92, 246, 0); }
+  100% { transform: scale(0.95); opacity: 0; box-shadow: 0 0 0 0 rgba(139, 92, 246, 0); }
+}
+
+.pulse-ring-active {
+  animation: pulse-ring 2s cubic-bezier(0.24, 0, 0.38, 1) infinite;
+}
+
+/* Streaming terminal log panel styling */
+.ide-terminal {
+  background: #020408;
+  border: 1px solid rgba(99, 102, 241, 0.1);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  color: #e2e8f0;
+  padding: 1.25rem;
+  border-radius: 8px;
+  position: relative;
+  overflow: hidden;
+  box-shadow: inset 0 2px 10px rgba(0,0,0,0.8);
+}
+
+.ide-terminal::after {
+  content: "";
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%), linear-gradient(90deg, rgba(255, 0, 0, 0.04), rgba(0, 255, 0, 0.02), rgba(0, 0, 255, 0.04));
+  background-size: 100% 3px, 6px 100%;
+  pointer-events: none;
+  opacity: 0.12;
+}
+
+/* Cursor typing effect */
+@keyframes blink-cursor {
   0%, 100% { opacity: 1; }
-  50% { opacity: 0.4; }
+  50% { opacity: 0; }
 }
 
-.pulse-dot {
-  animation: pulse-dot 2s ease-in-out infinite;
+.terminal-cursor {
+  display: inline-block;
+  width: 6px;
+  height: 15px;
+  background: var(--accent-purple);
+  margin-left: 4px;
+  animation: blink-cursor 1s step-end infinite;
 }
 
-/* Fade in */
+/* Animations */
 @keyframes fadeIn {
-  from { opacity: 0; transform: translateY(8px); }
+  from { opacity: 0; transform: translateY(6px); }
   to { opacity: 1; transform: translateY(0); }
 }
 
 .animate-fade-in {
-  animation: fadeIn 0.4s ease-out forwards;
+  animation: fadeIn 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
-/* Slide up */
 @keyframes slideUp {
-  from { opacity: 0; transform: translateY(20px); }
+  from { opacity: 0; transform: translateY(16px); }
   to { opacity: 1; transform: translateY(0); }
 }
 
 .animate-slide-up {
-  animation: slideUp 0.5s ease-out forwards;
+  animation: slideUp 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
-/* Shimmer loading */
-@keyframes shimmer {
-  0% { background-position: -200% 0; }
-  100% { background-position: 200% 0; }
-}
-
-.shimmer {
-  background: linear-gradient(90deg, var(--bg-secondary) 25%, var(--bg-tertiary) 50%, var(--bg-secondary) 75%);
-  background-size: 200% 100%;
-  animation: shimmer 1.5s infinite;
-}
-
-/* Sidebar navigation links */
+/* Sidebar nav items */
 .sidebar-nav-link {
   color: var(--text-secondary);
   text-decoration: none;
+  transition: all 0.2s ease;
+  border-left: 2px solid transparent;
 }
 
 .sidebar-nav-link:hover {
   background: var(--bg-hover);
   color: var(--text-primary);
+  border-left-color: var(--accent-purple);
 }
 
+.sidebar-nav-link-active {
+  background: var(--accent-glow);
+  color: var(--text-primary);
+  border-left-color: var(--accent-indigo);
+  font-weight: 500;
+}

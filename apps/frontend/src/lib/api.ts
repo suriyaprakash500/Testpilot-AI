@@ -105,13 +105,68 @@ export const api = {
   getAnalytics: async (): Promise<AnalyticsData> => {
     const res = await fetchApi("/api/projects/analytics");
     return res.data;
+  },
+  getActiveAgents: async (): Promise<{
+    repoAnalysis: boolean;
+    testPlanning: boolean;
+    playwrightGen: boolean;
+    browserExecution: boolean;
+    failureAnalysis: boolean;
+    githubIntegration: boolean;
+  }> => {
+    const res = await fetchApi("/api/projects/active-agents");
+    return res.data;
+  },
+  getPipelines: async (): Promise<PipelinesData> => {
+    const res = await fetchApi("/api/projects/pipelines");
+    return res.data;
+  },
+  getActiveSession: async (): Promise<{
+    runId: string;
+    status: string;
+    projectName: string;
+    websiteUrl: string;
+    testCaseName: string;
+  } | null> => {
+    const res = await fetchApi("/api/projects/active-session");
+    return res.data;
+  },
+  getRepositories: async (): Promise<Array<{
+    projectId: string;
+    repoUrl: string;
+    repoName: string;
+    projectName: string;
+    framework: string;
+    language: string;
+    analyzedAt: string | null;
+  }>> => {
+    const res = await fetchApi("/api/projects/repositories");
+    return res.data;
   }
 };
+
+export interface PipelineRunDetails {
+  id: string;
+  status: string;
+  createdAt: string;
+  completedAt: string | null;
+  casesCount: number;
+  passedCount: number;
+  failedCount: number;
+}
+
+export interface PipelinesData {
+  manual: PipelineRunDetails | null;
+  webhook: PipelineRunDetails | null;
+  schedule: PipelineRunDetails | null;
+}
 
 export interface AnalyticsData {
   averagePassRate: number;
   totalTimeSavedMs: number;
   failedRunAlerts: number;
+  totalRuns: number;
+  totalCases: number;
   projects: Array<{
     id: string;
     name: string;

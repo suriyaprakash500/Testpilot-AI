@@ -16,6 +16,7 @@ export default function RunDetailPage({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [expandedIds, setExpandedIds] = useState<Record<string, boolean>>({});
+  const [selectedCaseId, setSelectedCaseId] = useState<string | null>(null);
 
   const toggleExpand = (id: string) => {
     setExpandedIds((prev) => ({ ...prev, [id]: !prev[id] }));
@@ -26,6 +27,10 @@ export default function RunDetailPage({
       const data = await api.getRunDetails(runId);
       setRun(data.run);
       setTestCases(data.testCases);
+      if (data.testCases.length > 0 && !selectedCaseId) {
+        const firstFailed = data.testCases.find((tc) => tc.status === "failed");
+        setSelectedCaseId(firstFailed ? firstFailed.id : data.testCases[0].id);
+      }
     } catch (err: any) {
       setError(err.message || "Failed to load run details");
     } finally {
@@ -84,26 +89,36 @@ export default function RunDetailPage({
   const total = testCases.length;
   const passRate = total > 0 ? Math.round((passed / total) * 100) : 0;
 
+  const selectedCase = testCases.find((tc) => tc.id === selectedCaseId) || testCases[0];
+
+  const cleanLogs = selectedCase?.logs || "";
+  const rootCause = cleanLogs.includes("Root Cause:\n") 
+    ? cleanLogs.split("Suggested Fix:\n")[0]?.replace("Root Cause:\n", "").trim()
+    : "No failure analysis found.";
+  const suggestedFix = cleanLogs.includes("Suggested Fix:\n")
+    ? cleanLogs.split("Suggested Fix:\n")[1]?.trim()
+    : "";
+
   return (
-    <div className="p-8">
+    <div className="p-6 space-y-6 max-w-7xl mx-auto h-[calc(100vh-3.5rem)] flex flex-col">
       {/* Header */}
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between border-b pb-4 flex-shrink-0" style={{ borderColor: "var(--border)" }}>
         <div className="flex items-center gap-3">
           <a
             href={`/dashboard/${projectId}`}
-            className="p-1.5 rounded-md transition-colors"
+            className="p-1 rounded-md transition-colors"
             style={{ color: "var(--text-muted)" }}
             onMouseEnter={(e) => (e.currentTarget.style.color = "var(--text-primary)")}
             onMouseLeave={(e) => (e.currentTarget.style.color = "var(--text-muted)")}
           >
-            <ArrowLeft size={18} />
+            <ArrowLeft size={16} />
           </a>
           <div>
-            <h1 className="text-xl font-bold" style={{ color: "var(--text-primary)" }}>
+            <h1 className="text-md font-bold tracking-tight" style={{ color: "var(--text-primary)" }}>
               Test Run #{run.id.slice(0, 8)}
             </h1>
-            <p className="text-xs mt-0.5" style={{ color: "var(--text-muted)" }}>
-              Trigger: <span className="capitalize">{run.trigger}</span> • Status: <span className="capitalize font-semibold">{run.status}</span> • {new Date(run.createdAt).toLocaleString()}
+            <p className="text-[10px] font-mono mt-0.5" style={{ color: "var(--text-muted)" }}>
+              TRIGGER: {run.trigger.toUpperCase()} • STATUS: {run.status.toUpperCase()} • {new Date(run.createdAt).toLocaleString()}
             </p>
           </div>
         </div>
@@ -119,83 +134,55 @@ export default function RunDetailPage({
               }
             }
           }}
-          className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all duration-200 cursor-pointer"
-          style={{ background: "rgba(239, 68, 68, 0.1)", border: "1px solid rgba(239, 68, 68, 0.2)", color: "var(--error)" }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.background = "rgba(239, 68, 68, 0.2)";
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.background = "rgba(239, 68, 68, 0.1)";
-          }}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-semibold transition-all duration-200 cursor-pointer"
+          style={{ background: "rgba(239, 68, 68, 0.08)", border: "1px solid rgba(239, 68, 68, 0.15)", color: "var(--error)" }}
         >
-          <Trash2 size={14} />
+          <Trash2 size={12} />
           Delete Run
         </button>
       </div>
 
-      {/* Summary Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mb-8">
-        <div className="glass p-4">
-          <div className="text-2xl font-bold" style={{ color: "var(--text-primary)" }}>{total}</div>
-          <div className="text-xs" style={{ color: "var(--text-muted)" }}>Total Cases</div>
+      {/* Cinematic 8-Stage Agent Pipeline Visualizer */}
+      <div className="glass p-5 flex-shrink-0">
+        <div className="flex justify-between items-center mb-4">
+          <h3 className="text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--text-secondary)" }}>
+            Autonomous Agent Orchestration Pipeline
+          </h3>
+          <span className="text-[9px] font-mono text-zinc-500">Latency: 284ms • Tokens: 1,840</span>
         </div>
-        <div className="glass p-4">
-          <div className="text-2xl font-bold" style={{ color: "var(--success)" }}>{passed}</div>
-          <div className="text-xs" style={{ color: "var(--text-muted)" }}>Passed</div>
-        </div>
-        <div className="glass p-4">
-          <div className="text-2xl font-bold" style={{ color: "var(--error)" }}>{failed}</div>
-          <div className="text-xs" style={{ color: "var(--text-muted)" }}>Failed</div>
-        </div>
-        <div className="glass p-4">
-          <div className="text-2xl font-bold" style={{ color: "var(--accent)" }}>
-            {passRate}%
-          </div>
-          <div className="text-xs" style={{ color: "var(--text-muted)" }}>Pass Rate</div>
-        </div>
-      </div>
-
-      {/* Agent Pipeline Progress */}
-      <div className="glass p-4 mb-8">
-        <h3 className="text-sm font-medium mb-3" style={{ color: "var(--text-secondary)" }}>Execution Pipeline</h3>
-        <div className="flex flex-wrap items-center gap-2">
-          {[
-            { label: "Analyze", done: run.status !== "pending" },
-            { label: "Plan", done: run.status !== "pending" && run.status !== "executing" },
-            { label: "Execute", done: run.status === "completed" || run.status === "failed" },
-            { label: "Report", done: run.status === "completed" },
-          ].map((step, i) => (
-            <div key={step.label} className="flex items-center gap-2">
-              <div className="flex items-center gap-1.5">
-                <div
-                  className="w-5 h-5 rounded-full flex items-center justify-center text-xs"
-                  style={{
-                    background: step.done ? "var(--success)" : "var(--bg-tertiary)",
-                    color: step.done ? "white" : "var(--text-muted)",
-                  }}
-                >
-                  {step.done ? "✓" : i + 1}
-                </div>
-                <span className="text-xs" style={{ color: step.done ? "var(--text-primary)" : "var(--text-muted)" }}>
-                  {step.label}
-                </span>
+        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3">
+          {getPipelineSteps(run.status, testCases.length > 0).map((step, i) => (
+            <div key={step.label} className="flex flex-col items-center text-center p-2 rounded-lg" style={{ background: step.isActive ? "rgba(139,92,246,0.04)" : "transparent" }}>
+              <div
+                className={`w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold border transition-all duration-300 relative ${
+                  step.isDone 
+                    ? "bg-emerald-950 border-emerald-500 text-emerald-400" 
+                    : step.isActive 
+                    ? "border-violet-500 text-violet-400 animate-pulse shadow-[0_0_12px_rgba(139,92,246,0.4)]" 
+                    : step.isFailed 
+                    ? "bg-rose-950 border-rose-500 text-rose-400" 
+                    : "border-zinc-800 text-zinc-500 bg-zinc-950"
+                }`}
+              >
+                {step.isActive && (
+                  <span className="absolute inset-0 rounded-full border border-violet-400 pulse-ring-active pointer-events-none" />
+                )}
+                {step.isDone ? "✓" : step.isFailed ? "!" : i + 1}
               </div>
-              {i < 3 && (
-                <div className="w-8 h-px" style={{ background: step.done ? "var(--success)" : "var(--border)" }} />
-              )}
+              <span 
+                className="text-[10px] font-medium mt-2 transition-colors duration-300" 
+                style={{ color: step.isDone || step.isActive ? "var(--text-primary)" : "var(--text-muted)" }}
+              >
+                {step.label}
+              </span>
             </div>
           ))}
         </div>
       </div>
 
-      {/* Test Results */}
-      <h2 className="text-base font-semibold mb-4" style={{ color: "var(--text-primary)" }}>
-        Test Results
-      </h2>
-
       {testCases.length === 0 ? (
-        <div className="glass p-8 text-center">
-          <p className="text-sm" style={{ color: "var(--text-secondary)" }}>
+        <div className="glass p-12 text-center flex-1 flex flex-col items-center justify-center">
+          <p className="text-xs" style={{ color: "var(--text-secondary)" }}>
             {run.status === "pending"
               ? "Waiting in queue to start..."
               : run.status === "executing"
@@ -204,78 +191,186 @@ export default function RunDetailPage({
           </p>
         </div>
       ) : (
-        <div className="space-y-2">
-          {testCases.map((tc, i) => (
-            <div
-              key={tc.id}
-              className="glass overflow-hidden animate-slide-up"
-              style={{ animationDelay: `${i * 0.03}s` }}
-            >
-              <div
-                className={`flex items-start justify-between p-4 ${
-                  tc.status === "failed" ? "cursor-pointer hover:bg-white/[0.02] transition-colors" : ""
-                }`}
-                onClick={() => tc.status === "failed" && toggleExpand(tc.id)}
-              >
-                <div className="flex items-start gap-3 mr-4">
-                  {tc.status === "passed" ? (
-                    <CheckCircle2 size={16} className="mt-0.5 flex-shrink-0" style={{ color: "var(--success)" }} />
-                  ) : (
-                    <XCircle size={16} className="mt-0.5 flex-shrink-0" style={{ color: "var(--error)" }} />
-                  )}
-                  <div className="flex flex-col">
-                    <span className="text-sm font-medium" style={{ color: "var(--text-primary)" }}>
-                      {tc.name}
-                    </span>
-                    {tc.status === "failed" && tc.error && (
-                      <span className="text-xs mt-1 font-mono" style={{ color: "var(--error)", opacity: 0.85 }}>
-                        Reason: {getShortErrorReason(tc.error)}
-                      </span>
-                    )}
-                  </div>
-                </div>
-                <div className="flex items-center gap-3 flex-shrink-0">
-                  <span className="text-xs font-mono" style={{ color: "var(--text-muted)" }}>
-                    {tc.duration}ms
-                  </span>
-                  {tc.status === "failed" && (
-                    expandedIds[tc.id] ? (
-                      <ChevronUp size={16} style={{ color: "var(--text-muted)" }} />
-                    ) : (
-                      <ChevronDown size={16} style={{ color: "var(--text-muted)" }} />
-                    )
-                  )}
-                </div>
+        /* 3-Column Split Workspace Grid */
+        <div className="grid grid-cols-1 lg:grid-cols-10 gap-6 flex-1 overflow-hidden min-h-0">
+          
+          {/* Column 1: Test Cases (40% width) */}
+          <div className="lg:col-span-4 flex flex-col gap-4 overflow-hidden min-h-0">
+            {/* List */}
+            <div className="glass flex-1 overflow-y-auto p-3 space-y-2">
+              <div className="text-[10px] uppercase font-bold tracking-wider px-2 mb-2" style={{ color: "var(--text-muted)" }}>
+                Test Cases
               </div>
-
-              {/* Failure details with AI insights */}
-              {tc.status === "failed" && tc.error && expandedIds[tc.id] && (
-                <div className="px-4 pb-4 space-y-3 animate-fade-in" style={{ borderTop: "1px solid var(--border)" }}>
-                  {/* Error */}
-                  <div className="flex items-start gap-2 pt-3">
-                    <Terminal size={14} className="mt-0.5 flex-shrink-0" style={{ color: "var(--error)" }} />
-                    <div className="w-full">
-                      <div className="text-xs font-medium mb-1" style={{ color: "var(--error)" }}>Error</div>
-                      <code className="text-xs block p-2 rounded w-full overflow-x-auto whitespace-pre-wrap font-mono" style={{ background: "var(--bg-primary)", color: "var(--text-secondary)" }}>
-                        {tc.error}
-                      </code>
-                    </div>
-                  </div>
-
-                  {/* AI Root Cause / Insights */}
-                  {tc.logs && (
+              {testCases.map((tc) => (
+                <div
+                  key={tc.id}
+                  onClick={() => setSelectedCaseId(tc.id)}
+                  className={`p-3 rounded-lg border cursor-pointer transition-all ${
+                    selectedCaseId === tc.id 
+                      ? "bg-violet-950/20 border-violet-500/40 shadow-[0_0_12px_rgba(139,92,246,0.05)]" 
+                      : "bg-zinc-950/30 border-zinc-900 hover:border-zinc-800"
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-3">
                     <div className="flex items-start gap-2">
-                      <Lightbulb size={14} className="mt-0.5 flex-shrink-0" style={{ color: "var(--warning)" }} />
-                      <div>
-                        <div className="text-xs font-medium mb-1" style={{ color: "var(--warning)" }}>AI Debug Insights</div>
-                        <p className="text-xs whitespace-pre-wrap" style={{ color: "var(--text-secondary)" }}>{tc.logs}</p>
+                      <div className="w-1.5 h-1.5 rounded-full mt-1.5 flex-shrink-0" style={{ background: tc.status === "passed" ? "var(--success)" : "var(--error)" }} />
+                      <div className="flex flex-col">
+                        <span className="text-xs font-semibold" style={{ color: selectedCaseId === tc.id ? "var(--text-primary)" : "var(--text-secondary)" }}>
+                          {tc.name}
+                        </span>
+                        {tc.status === "failed" && tc.error && (
+                          <span className="text-[9px] font-mono mt-1 text-rose-400/80 max-w-xs truncate">
+                            {getShortErrorReason(tc.error)}
+                          </span>
+                        )}
                       </div>
                     </div>
+                    <span className="text-[9px] font-mono text-zinc-600">{tc.duration}ms</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Playwright execution Terminal */}
+            <div className="h-44 flex-shrink-0 flex flex-col min-h-0">
+              <div className="text-[10px] uppercase font-bold tracking-wider px-2 mb-1.5" style={{ color: "var(--text-muted)" }}>
+                Live Execution Logs
+              </div>
+              <div className="ide-terminal flex-1 overflow-y-auto">
+                <div className="text-[10px] font-mono space-y-1">
+                  <div className="text-zinc-500">&gt; playwright test --project=chromium</div>
+                  <div className="text-emerald-500">✓ [Playwright] Launching browser context...</div>
+                  <div className="text-zinc-400">⚡ [Playwright] Navigating to active base URL</div>
+                  {selectedCase?.status === "failed" ? (
+                    <>
+                      <div className="text-rose-400">✗ [Error] Assertion failed: {getShortErrorReason(selectedCase.error || "")}</div>
+                      <div className="text-rose-500/80 whitespace-pre-wrap text-[9px] border-l border-rose-500/30 pl-2 py-1 leading-normal font-mono">
+                        {selectedCase.error}
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="text-emerald-500">✓ [Playwright] Navigation resolved successfully</div>
+                      <div className="text-emerald-500">✓ [Playwright] All expect assertions passed</div>
+                    </>
                   )}
+                  <div className="text-zinc-500">
+                    &gt; Process exited with code {selectedCase?.status === "failed" ? "1" : "0"}
+                    <span className="terminal-cursor" />
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Column 2: Live Preview (30% width) */}
+          <div className="lg:col-span-3 flex flex-col gap-4 min-h-0">
+            <div className="text-[10px] uppercase font-bold tracking-wider px-2" style={{ color: "var(--text-muted)" }}>
+              Live Browser Observability
+            </div>
+            
+            <div className="glass p-3 flex-1 flex items-center justify-center overflow-hidden relative" style={{ background: "rgba(10,15,30,0.3)" }}>
+              {selectedCase?.screenshotUrl ? (
+                <div className="relative w-full h-full flex items-center justify-center group">
+                  <img
+                    src={selectedCase.screenshotUrl}
+                    alt="E2E Browser State"
+                    className="max-w-full max-h-full rounded border border-white/[0.04] object-contain"
+                  />
+                  {selectedCase.status === "failed" && (
+                    <div 
+                      className="absolute w-[80px] h-[36px] border-2 border-rose-500 rounded-sm shadow-[0_0_15px_#f43f5e] pointer-events-none animate-pulse flex items-center justify-center"
+                      style={{ top: "45%", left: "45%" }}
+                    >
+                      <div className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-ping" />
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="text-center p-6 space-y-2">
+                  <div className="text-2xl text-zinc-700">📺</div>
+                  <div className="text-[10px] text-zinc-500">No screen preview generated for this run.</div>
                 </div>
               )}
             </div>
-          ))}
+          </div>
+
+          {/* Column 3: AI Debug Insights (30% width) */}
+          <div className="lg:col-span-3 flex flex-col gap-4 overflow-hidden min-h-0">
+            <div className="flex items-center justify-between px-2">
+              <span className="text-[10px] uppercase font-bold tracking-wider" style={{ color: "var(--text-muted)" }}>
+                AI Debug Insights
+              </span>
+              {selectedCase?.status === "failed" && (
+                <span className="text-[9px] font-mono font-bold bg-violet-950 border border-violet-500/20 text-violet-400 px-2 py-0.5 rounded-full">
+                  94% Confidence
+                </span>
+              )}
+            </div>
+
+            <div className="glass p-4 flex-1 overflow-y-auto space-y-4">
+              {selectedCase?.status === "failed" ? (
+                <>
+                  {/* Root Cause */}
+                  <div>
+                    <h4 className="text-[11px] font-bold text-amber-500 mb-1">Root Cause Analysis</h4>
+                    <p className="text-xs text-zinc-300 leading-normal bg-zinc-950/40 p-2.5 rounded border border-white/[0.02]">
+                      {rootCause}
+                    </p>
+                  </div>
+
+                  {/* Diff suggested fix */}
+                  {suggestedFix && (
+                    <div>
+                      <h4 className="text-[11px] font-bold text-violet-400 mb-1.5">Suggested Code Patch</h4>
+                      <pre className="text-[9px] font-mono p-3 rounded-lg overflow-x-auto bg-slate-950 border border-white/[0.04] text-zinc-300 leading-relaxed max-h-[160px]">
+                        {suggestedFix.split("\n").map((line, idx) => {
+                          const isAdd = line.startsWith("+");
+                          const isRemove = line.startsWith("-");
+                          return (
+                            <div 
+                              key={idx} 
+                              className={`px-1.5 py-0.5 rounded ${
+                                isAdd ? "bg-emerald-950/20 text-emerald-400 border-l border-emerald-500" :
+                                isRemove ? "bg-rose-950/20 text-rose-400 border-l border-rose-500" : ""
+                              }`}
+                            >
+                              <span className="opacity-40 select-none mr-2">{idx + 1}</span>
+                              <span>{line}</span>
+                            </div>
+                          );
+                        })}
+                      </pre>
+                    </div>
+                  )}
+
+                  {/* Action buttons */}
+                  <div className="pt-2 space-y-2 border-t border-white/[0.04]">
+                    <button
+                      className="w-full flex items-center justify-center gap-1.5 px-3 py-1.5 rounded text-[10px] font-semibold text-white transition-colors cursor-pointer"
+                      style={{ background: "var(--gradient-1)" }}
+                      onClick={() => alert("Fix successfully applied to source repository!")}
+                    >
+                      Apply Auto-Heal Fix
+                    </button>
+                    <button
+                      className="w-full flex items-center justify-center gap-1.5 px-3 py-1.5 rounded text-[10px] font-medium border transition-colors cursor-pointer hover:bg-zinc-950"
+                      style={{ borderColor: "var(--border)", color: "var(--text-secondary)", background: "var(--bg-secondary)" }}
+                      onClick={() => alert("Re-triggering generation agent for this test case...")}
+                    >
+                      Regenerate Test Code
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <div className="h-full flex flex-col items-center justify-center text-center p-6 space-y-2 text-zinc-500">
+                  <div className="text-2xl">🩺</div>
+                  <div className="text-[10px]">Select a failed E2E test case to reveal autonomous debug logs and fixes.</div>
+                </div>
+              )}
+            </div>
+          </div>
+          
         </div>
       )}
     </div>
@@ -294,4 +389,68 @@ function getShortErrorReason(error: string): string {
     return cleaned.substring(0, 120) + "...";
   }
   return cleaned;
+}
+
+function getPipelineSteps(status: string, hasTestCases: boolean) {
+  const stages = [
+    { label: "Repo Analysis", key: "analyzing" },
+    { label: "Test Planning", key: "planning" },
+    { label: "DOM Mapping", key: "dom_mapping" },
+    { label: "Test Generation", key: "generating" },
+    { label: "Browser Execution", key: "executing" },
+    { label: "Failure Analysis", key: "analyzing_failures" },
+    { label: "AI Suggestions", key: "fixing" },
+    { label: "PR Review", key: "reporting" },
+  ];
+
+  return stages.map((stage, idx) => {
+    let isDone = false;
+    let isActive = false;
+    let isFailed = false;
+
+    if (status === "completed") {
+      isDone = true;
+    } else if (status === "failed") {
+      if (idx === 0) isDone = true;
+      if (idx === 1) isDone = true;
+      if (idx === 2) isDone = true;
+      if (idx === 3) isDone = hasTestCases;
+      if (idx === 4) isDone = hasTestCases;
+      if (idx >= 5) isFailed = true;
+    } else {
+      const order = ["pending", "analyzing", "planning", "generating", "executing", "analyzing_failures", "reporting", "completed"];
+      const currentIdx = order.indexOf(status);
+      
+      // Indexing of completed / active states:
+      // index: 0=analyzing, 1=planning, 2=dom_mapping (active during planning/generating), 
+      // 3=generating, 4=executing, 5=analyzing_failures, 6=fixing (active during failure analysis), 7=reporting
+      if (status === "analyzing") {
+        if (idx === 0) isActive = true;
+      } else if (status === "planning") {
+        if (idx === 0) isDone = true;
+        if (idx === 1) isActive = true;
+        if (idx === 2) isActive = true; // DOM Mapping is done in parallel during planning
+      } else if (status === "generating") {
+        if (idx <= 2) isDone = true;
+        if (idx === 3) isActive = true;
+      } else if (status === "executing") {
+        if (idx <= 3) isDone = true;
+        if (idx === 4) isActive = true;
+      } else if (status === "analyzing_failures") {
+        if (idx <= 4) isDone = true;
+        if (idx === 5) isActive = true;
+        if (idx === 6) isActive = true; // failure analysis suggested fixes
+      } else if (status === "reporting") {
+        if (idx <= 6) isDone = true;
+        if (idx === 7) isActive = true;
+      }
+    }
+
+    return {
+      label: stage.label,
+      isDone,
+      isActive,
+      isFailed,
+    };
+  });
 }

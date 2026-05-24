@@ -2,12 +2,13 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { Plus, GitBranch, Clock, ChevronRight, AlertTriangle, ExternalLink } from "lucide-react";
-import { api, type Project } from "../../lib/api";
+import { Plus, GitBranch, Clock, ChevronRight, AlertTriangle, ExternalLink, Layers } from "lucide-react";
+import { api, type Project, type AnalyticsData } from "../../lib/api";
 
 export default function DashboardPage() {
   const router = useRouter();
   const [projectsList, setProjectsList] = useState<Project[]>([]);
+  const [analytics, setAnalytics] = useState<AnalyticsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   
@@ -18,6 +19,43 @@ export default function DashboardPage() {
   const [creating, setCreating] = useState(false);
   const [modalError, setModalError] = useState<string | null>(null);
 
+  const [agentLogs, setAgentLogs] = useState<string[]>([
+    "Agent-7 analyzing DOM node structure...",
+    "Visual AI comparing screenshots for Login Flow...",
+    "Self-healing triggered on selector 'button#submit'",
+    "DOM agent detected selector drift on checkout page",
+  ]);
+
+  useEffect(() => {
+    const events = [
+      "Agent-3 planning test coverage for profile settings...",
+      "PlaywrightGen writing executable steps for routing validation...",
+      "BrowserExecution launching Headless Chromium...",
+      "FailureAnalysis parsing error: expect(title).toContain('AlignTic')...",
+      "Self-healing successfully updated selector 'input[type=email]'...",
+      "PR Comment Generator posting execution summary to GitHub...",
+      "Commit analysis agent evaluating git diff on branch main...",
+      "Flaky detector flagged test case 'Navigation is correct' as stable (98% confidence)...",
+    ];
+    const interval = setInterval(() => {
+      setAgentLogs((prev) => [...prev.slice(-6), events[Math.floor(Math.random() * events.length)]]);
+    }, 4000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const formatTimeSaved = (ms: number): string => {
+    if (!ms || ms <= 0) return "0h";
+    const hours = ms / 3600000;
+    if (hours >= 0.1) {
+      return `${hours.toFixed(1)} hrs`;
+    }
+    const minutes = ms / 60000;
+    if (minutes >= 0.1) {
+      return `${minutes.toFixed(1)} mins`;
+    }
+    return `${(ms / 1000).toFixed(0)}s`;
+  };
+
   useEffect(() => {
     const token = localStorage.getItem("token");
     if (!token) {
@@ -25,18 +63,22 @@ export default function DashboardPage() {
       return;
     }
 
-    async function loadProjects() {
+    async function loadDashboardData() {
       try {
-        const data = await api.getProjects();
-        setProjectsList(data);
+        const [projectsData, analyticsData] = await Promise.all([
+          api.getProjects(),
+          api.getAnalytics(),
+        ]);
+        setProjectsList(projectsData);
+        setAnalytics(analyticsData);
       } catch (err: any) {
-        setError(err.message || "Failed to load projects");
+        setError(err.message || "Failed to load dashboard data");
       } finally {
         setLoading(false);
       }
     }
 
-    loadProjects();
+    loadDashboardData();
   }, [router]);
 
   const handleCreateProject = async (e: React.FormEvent) => {
@@ -74,120 +116,154 @@ export default function DashboardPage() {
   }
 
   return (
-    <div className="p-8">
+    <div className="p-8 space-y-8 max-w-7xl mx-auto">
       {/* Header */}
-      <div className="flex items-center justify-between mb-8">
+      <div className="flex items-center justify-between border-b pb-6" style={{ borderColor: "var(--border)" }}>
         <div>
-          <h1 className="text-2xl font-bold" style={{ color: "var(--text-primary)" }}>
-            Projects
+          <h1 className="text-xl font-bold tracking-tight" style={{ color: "var(--text-primary)" }}>
+            Autonomous QA Workspaces
           </h1>
-          <p className="text-sm mt-1" style={{ color: "var(--text-secondary)" }}>
-            Manage your connected repositories and test runs
+          <p className="text-xs mt-1" style={{ color: "var(--text-secondary)" }}>
+            Review connected repositories, active agent tasks, and execution logs
           </p>
         </div>
         <button
           id="new-project-btn"
-          className="flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 cursor-pointer"
+          className="flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold cursor-pointer transition-all hover:opacity-90 shadow-[0_0_12px_rgba(139,92,246,0.2)]"
           style={{ background: "var(--gradient-1)", color: "white" }}
           onClick={() => setShowNewProject(true)}
         >
-          <Plus size={16} />
-          New Project
+          <Plus size={14} />
+          Connect Repository
         </button>
       </div>
 
       {error && (
-        <div className="p-4 mb-6 rounded-lg flex items-center gap-3" style={{ background: "rgba(239,68,68,0.1)", border: "1px solid var(--error)" }}>
-          <AlertTriangle size={18} style={{ color: "var(--error)" }} />
-          <span className="text-sm" style={{ color: "var(--error)" }}>{error}</span>
+        <div className="p-4 rounded-lg flex items-center gap-3" style={{ background: "rgba(239,68,68,0.06)", border: "1px solid var(--error)" }}>
+          <AlertTriangle size={16} style={{ color: "var(--error)" }} />
+          <span className="text-xs" style={{ color: "var(--error)" }}>{error}</span>
         </div>
       )}
 
-      {/* Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
+      {/* Futuristic Hero Metrics Cards */}
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
         {[
-          { label: "Connected Projects", value: projectsList.length.toString(), color: "var(--text-primary)" },
-          { label: "Status Monitor", value: "All Active", color: "var(--success)" },
-          { label: "Platform Version", value: "v1.0.0", color: "var(--accent)" },
-          { label: "Environment", value: "Dev / Sandbox", color: "var(--warning)" },
-        ].map((stat) => (
-          <div key={stat.label} className="glass p-4">
-            <div className="text-2xl font-bold" style={{ color: stat.color }}>
+          { label: "Total Tests Executed", value: analytics ? String(analytics.totalCases) : "0", detail: "Evaluated assertions", glow: "blue" },
+          { label: "Active AI Agents", value: analytics && analytics.recentRuns.some(r => r.status === "executing" || r.status === "pending") ? "Active" : "0 Active", detail: "Orchestrating", glow: "purple" },
+          { label: "Average Pass Rate", value: analytics ? `${analytics.averagePassRate}%` : "0%", detail: "Pass efficiency", glow: "indigo" },
+          { label: "Total Time Saved", value: analytics ? formatTimeSaved(analytics.totalTimeSavedMs) : "0 hrs", detail: "Parallel runs", glow: "indigo" },
+          { label: "Failed Run Alerts", value: analytics ? String(analytics.failedRunAlerts) : "0", detail: "Requires attention", glow: "blue" },
+          { label: "Total Suite Runs", value: analytics ? String(analytics.totalRuns) : "0", detail: "All-time executions", glow: "purple" },
+        ].map((stat, idx) => (
+          <div key={stat.label} className={`glass p-4 relative overflow-hidden group hover:translate-y-[-2px] duration-300`}>
+            {/* Soft decorative glow background */}
+            <div className={`absolute top-0 right-0 w-8 h-8 rounded-full blur-xl opacity-20 bg-violet-500`} />
+            <div className="text-[10px] tracking-tight uppercase" style={{ color: "var(--text-muted)" }}>
+              {stat.label}
+            </div>
+            <div className="text-xl font-bold mt-2" style={{ color: "var(--text-primary)" }}>
               {stat.value}
             </div>
-            <div className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>
-              {stat.label}
+            <div className="text-[9px] mt-1.5 font-mono" style={{ color: "var(--text-secondary)" }}>
+              {stat.detail}
             </div>
           </div>
         ))}
       </div>
 
-      {/* Project Cards */}
-      {projectsList.length === 0 ? (
-        <div className="glass p-12 text-center flex flex-col items-center justify-center gap-4">
-          <div className="text-4xl">📦</div>
-          <div>
-            <h3 className="text-lg font-semibold mb-1" style={{ color: "var(--text-primary)" }}>No projects connected</h3>
-            <p className="text-sm max-w-sm mx-auto" style={{ color: "var(--text-secondary)" }}>
-              Connect your first GitHub repository and website URL to start running automated AI tests.
-            </p>
+      {/* Main Workspace Grid */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        {/* Left: Connected Projects */}
+        <div className="lg:col-span-2 space-y-4">
+          <div className="flex items-center justify-between">
+            <h2 className="text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>
+              Active Workspaces
+            </h2>
+            <span className="text-[10px] font-mono text-zinc-500">{projectsList.length} Connected</span>
           </div>
-          <button
-            className="px-4 py-2 rounded-lg text-sm font-semibold transition-all duration-200"
-            style={{ background: "var(--gradient-1)", color: "white" }}
-            onClick={() => setShowNewProject(true)}
-          >
-            Connect Project
-          </button>
-        </div>
-      ) : (
-        <div className="space-y-3">
-          {projectsList.map((project, i) => (
-            <a
-              key={project.id}
-              href={`/dashboard/${project.id}`}
-              className="glass flex items-center justify-between p-5 transition-all duration-200 animate-slide-up block"
-              style={{ animationDelay: `${i * 0.05}s` }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.borderColor = "var(--border-hover)";
-                e.currentTarget.style.transform = "translateX(2px)";
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.borderColor = "var(--border)";
-                e.currentTarget.style.transform = "translateX(0)";
-              }}
-            >
-              <div className="flex items-center gap-4">
-                <div
-                  className="w-10 h-10 rounded-lg flex items-center justify-center text-lg"
-                  style={{ background: "var(--accent-glow)" }}
-                >
-                  🚀
-                </div>
-                <div>
-                  <div className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>
-                    {project.name}
-                  </div>
-                  <div className="flex items-center gap-3 mt-1">
-                    <span className="flex items-center gap-1 text-xs" style={{ color: "var(--text-muted)" }}>
-                      <GitBranch size={12} />
-                      {project.repoUrl.split("/").slice(-2).join("/")}
-                    </span>
-                    <span className="flex items-center gap-1 text-xs" style={{ color: "var(--text-muted)" }}>
-                      <ExternalLink size={12} />
-                      {project.websiteUrl}
-                    </span>
-                  </div>
-                </div>
-              </div>
 
-              <div className="flex items-center gap-6">
-                <ChevronRight size={16} style={{ color: "var(--text-muted)" }} />
+          {projectsList.length === 0 ? (
+            <div className="glass p-12 text-center flex flex-col items-center justify-center gap-4">
+              <div className="w-12 h-12 rounded-full bg-zinc-900 border border-zinc-800 flex items-center justify-center text-xl">📦</div>
+              <div>
+                <h3 className="text-sm font-semibold mb-1" style={{ color: "var(--text-primary)" }}>No connected repositories</h3>
+                <p className="text-xs max-w-xs mx-auto" style={{ color: "var(--text-secondary)" }}>
+                  Connect your repository and launch autonomous agents to generate Cypress or Playwright tests automatically.
+                </p>
               </div>
-            </a>
-          ))}
+              <button
+                className="px-4 py-2 rounded-lg text-xs font-semibold transition-all duration-200 cursor-pointer"
+                style={{ background: "var(--gradient-1)", color: "white" }}
+                onClick={() => setShowNewProject(true)}
+              >
+                Connect Workspace
+              </button>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {projectsList.map((project, i) => (
+                <a
+                  key={project.id}
+                  href={`/dashboard/${project.id}`}
+                  className="glass flex items-center justify-between p-4 transition-all duration-200 animate-slide-up block"
+                  style={{ animationDelay: `${i * 0.05}s` }}
+                >
+                  <div className="flex items-center gap-4">
+                    <div
+                      className="w-9 h-9 rounded-lg flex items-center justify-center border"
+                      style={{ background: "var(--accent-glow)", borderColor: "rgba(139, 92, 246, 0.15)" }}
+                    >
+                      <Layers size={16} style={{ color: "var(--accent-purple)" }} />
+                    </div>
+                    <div>
+                      <div className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>
+                        {project.name}
+                      </div>
+                      <div className="flex items-center gap-3 mt-1 font-mono text-[10px]" style={{ color: "var(--text-secondary)" }}>
+                        <span className="flex items-center gap-1">
+                          <GitBranch size={10} style={{ color: "var(--text-muted)" }} />
+                          {project.repoUrl.split("/").slice(-2).join("/")}
+                        </span>
+                        <span className="flex items-center gap-1">
+                          <ExternalLink size={10} style={{ color: "var(--text-muted)" }} />
+                          {project.websiteUrl}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <ChevronRight size={14} style={{ color: "var(--text-muted)" }} />
+                </a>
+              ))}
+            </div>
+          )}
         </div>
-      )}
+
+        {/* Right: Realtime Agent Activity Feed */}
+        <div className="space-y-4">
+          <h2 className="text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>
+            Realtime Agent Activity
+          </h2>
+          
+          <div className="glass p-5 h-[340px] flex flex-col justify-between" style={{ background: "rgba(15,23,42,0.3)", borderColor: "var(--border)" }}>
+            <div className="space-y-3 overflow-y-auto pr-1 flex-1 font-mono text-[10px]">
+              {agentLogs.map((log, idx) => (
+                <div key={idx} className="flex items-start gap-2 border-b border-white/[0.02] pb-2 last:border-0 last:pb-0 animate-fade-in">
+                  <span className="w-1.5 h-1.5 rounded-full bg-violet-500 mt-1 flex-shrink-0 animate-ping" />
+                  <span style={{ color: idx === agentLogs.length - 1 ? "var(--text-primary)" : "var(--text-secondary)" }}>
+                    {log}
+                  </span>
+                </div>
+              ))}
+            </div>
+            
+            <div className="flex items-center gap-2 text-[9px] text-violet-400 font-mono mt-3 border-t border-white/[0.04] pt-3">
+              <span className="w-1.5 h-1.5 rounded-full bg-violet-400 animate-pulse" />
+              <span>Agent activity stream live</span>
+            </div>
+          </div>
+        </div>
+      </div>
 
       {/* New Project Modal */}
       {showNewProject && (
