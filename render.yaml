@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: testpilot-backend
+    env: docker
+    plan: free
+    dockerfilePath: Dockerfile.backend
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: GROQ_API_KEY
+        sync: false
+      - key: BACKEND_PORT
+        value: 3001
+      - key: BACKEND_URL
+        sync: false
