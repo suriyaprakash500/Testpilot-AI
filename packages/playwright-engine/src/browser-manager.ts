@@ -33,6 +33,7 @@ export async function createContext(options?: {
   viewport?: { width: number; height: number };
   userAgent?: string;
   baseURL?: string;
+  storageStatePath?: string;
 }): Promise<BrowserContext> {
   const browser = await getBrowser();
   const context = await browser.newContext({
@@ -41,6 +42,7 @@ export async function createContext(options?: {
     baseURL: options?.baseURL,
     ignoreHTTPSErrors: true,
     recordVideo: undefined, // enable per-run if needed
+    ...(options?.storageStatePath ? { storageState: options.storageStatePath } : {}),
   });
 
   // Set default timeouts

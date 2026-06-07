@@ -62,11 +62,17 @@ export async function triggerTestRun(projectId: string, triggerType: "manual" | 
   if (!user) throw new NotFoundError("User", project.userId);
   const decryptedToken = decrypt(user.githubToken);
 
+  // Build test credentials if available
+  const testCredentials = project.testEmail && project.testPassword
+    ? { email: project.testEmail, password: decrypt(project.testPassword) }
+    : undefined;
+
   // Fire and forget — the orchestrator runs asynchronously
   orchestrator.execute(projectId, run!.id, {
     websiteUrl: project.websiteUrl,
     repoUrl: project.repoUrl,
     githubToken: decryptedToken,
+    testCredentials,
   }).then(async ({ results, status }) => {
     logger.info({ runId: run!.id, status }, "Test run completed");
     queueUpdate(async () => {

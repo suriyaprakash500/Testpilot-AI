@@ -11,6 +11,8 @@ export const createProjectSchema = z.object({
     .regex(/github\.com\/[\w.-]+\/[\w.-]+/, "Must be a valid GitHub repository URL"),
   websiteUrl: z.string().url("Must be a valid URL"),
   name: z.string().min(1).max(100).optional(),
+  testEmail: z.string().email().optional(),
+  testPassword: z.string().min(1).optional(),
 });
 
 export const triggerRunSchema = z.object({
@@ -34,7 +36,7 @@ export const repoAnalysisOutputSchema = z.object({
     z.object({
       name: z.string(),
       filePath: z.string(),
-      type: z.enum(["page", "layout", "component", "api"]),
+      type: z.enum(["page", "layout", "component", "api", "context", "hook", "util", "config"]).catch("component"),
     })
   ),
   hasAuth: z.boolean(),

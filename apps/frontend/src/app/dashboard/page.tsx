@@ -16,6 +16,8 @@ export default function DashboardPage() {
   const [showNewProject, setShowNewProject] = useState(false);
   const [newRepoUrl, setNewRepoUrl] = useState("");
   const [newWebsiteUrl, setNewWebsiteUrl] = useState("");
+  const [newTestEmail, setNewTestEmail] = useState("");
+  const [newTestPassword, setNewTestPassword] = useState("");
   const [creating, setCreating] = useState(false);
   const [modalError, setModalError] = useState<string | null>(null);
 
@@ -92,11 +94,15 @@ export default function DashboardPage() {
       const newProj = await api.createProject({
         repoUrl: newRepoUrl,
         websiteUrl: newWebsiteUrl,
+        ...(newTestEmail ? { testEmail: newTestEmail } : {}),
+        ...(newTestPassword ? { testPassword: newTestPassword } : {}),
       });
       setProjectsList((prev) => [...prev, newProj]);
       setShowNewProject(false);
       setNewRepoUrl("");
       setNewWebsiteUrl("");
+      setNewTestEmail("");
+      setNewTestPassword("");
     } catch (err: any) {
       setModalError(err.message || "Failed to create project");
     } finally {
@@ -329,6 +335,45 @@ export default function DashboardPage() {
                   onFocus={(e) => (e.target.style.borderColor = "var(--accent)")}
                   onBlur={(e) => (e.target.style.borderColor = "var(--border)")}
                 />
+              </div>
+
+              {/* Test Credentials */}
+              <div className="border-t pt-3 mt-1" style={{ borderColor: "var(--border)" }}>
+                <label className="text-xs font-medium mb-2 block" style={{ color: "var(--text-muted)" }}>
+                  Test Credentials (Optional) — for auto-login on auth-protected apps
+                </label>
+                <div className="grid grid-cols-2 gap-3">
+                  <input
+                    id="modal-test-email"
+                    type="email"
+                    placeholder="test@example.com"
+                    value={newTestEmail}
+                    onChange={(e) => setNewTestEmail(e.target.value)}
+                    className="w-full px-3 py-2 rounded-lg text-sm outline-none transition-all"
+                    style={{
+                      background: "var(--bg-primary)",
+                      border: "1px solid var(--border)",
+                      color: "var(--text-primary)",
+                    }}
+                    onFocus={(e) => (e.target.style.borderColor = "var(--accent)")}
+                    onBlur={(e) => (e.target.style.borderColor = "var(--border)")}
+                  />
+                  <input
+                    id="modal-test-password"
+                    type="password"
+                    placeholder="Password"
+                    value={newTestPassword}
+                    onChange={(e) => setNewTestPassword(e.target.value)}
+                    className="w-full px-3 py-2 rounded-lg text-sm outline-none transition-all"
+                    style={{
+                      background: "var(--bg-primary)",
+                      border: "1px solid var(--border)",
+                      color: "var(--text-primary)",
+                    }}
+                    onFocus={(e) => (e.target.style.borderColor = "var(--accent)")}
+                    onBlur={(e) => (e.target.style.borderColor = "var(--border)")}
+                  />
+                </div>
               </div>
               <div className="flex gap-3 pt-2">
                 <button

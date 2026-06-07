@@ -22,7 +22,7 @@ const app = express();
 const PORT = parseInt(process.env["BACKEND_PORT"] || "3001", 10);
 
 // --- Middleware ---
-app.use(helmet({ contentSecurityPolicy: false }));
+app.use(helmet({ contentSecurityPolicy: false, crossOriginResourcePolicy: { policy: "cross-origin" } }));
 app.use(cors({
   origin: process.env["FRONTEND_URL"] || "http://localhost:3000",
   credentials: true,

@@ -67,7 +67,7 @@ export const api = {
     const res = await fetchApi(`/api/projects/${id}`);
     return res.data;
   },
-  createProject: async (data: { repoUrl: string; websiteUrl: string }): Promise<Project> => {
+  createProject: async (data: { repoUrl: string; websiteUrl: string; testEmail?: string; testPassword?: string }): Promise<Project> => {
     const res = await fetchApi("/api/projects", {
       method: "POST",
       body: JSON.stringify(data),

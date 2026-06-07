@@ -4,7 +4,7 @@ import { getDb, projects, eq, testRuns, testCases, inArray, desc, and, repositor
 
 
 import { requireAuth, type AuthRequest } from "../middleware/auth.js";
-import { NotFoundError } from "@testpilot/shared";
+import { NotFoundError, encrypt } from "@testpilot/shared";
 
 const router: Router = Router();
 
@@ -27,6 +27,8 @@ router.post("/", requireAuth, async (req: AuthRequest, res: Response, next: Next
       name: input.name || repoName,
       repoUrl: input.repoUrl,
       websiteUrl: input.websiteUrl,
+      testEmail: input.testEmail || null,
+      testPassword: input.testPassword ? encrypt(input.testPassword) : null,
     }).returning();
 
     res.status(201).json({ success: true, data: project });

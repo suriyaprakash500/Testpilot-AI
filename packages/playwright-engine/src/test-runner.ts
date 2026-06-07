@@ -13,6 +13,7 @@ export interface TestRunOptions {
   projectId: string;
   runId: string;
   websiteUrl?: string;
+  storageStatePath?: string;
 }
 
 export interface TestRunResult {
@@ -44,7 +45,7 @@ export async function runTest(options: TestRunOptions): Promise<TestRunResult> {
   let page: any = undefined;
 
   try {
-    context = await createContext({ baseURL: options.websiteUrl });
+    context = await createContext({ baseURL: options.websiteUrl, storageStatePath: options.storageStatePath });
     const rawPage = await context.newPage();
     page = wrapPageWithScreenshotSanitizer(rawPage);
 

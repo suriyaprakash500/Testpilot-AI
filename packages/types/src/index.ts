@@ -24,6 +24,8 @@ export interface Project {
   name: string;
   repoUrl: string;
   websiteUrl: string;
+  testEmail?: string | null;
+  testPassword?: string | null;
   status: ProjectStatus;
   createdAt: Date;
   updatedAt: Date;
@@ -53,7 +55,7 @@ export interface RouteInfo {
 export interface ComponentInfo {
   name: string;
   filePath: string;
-  type: "page" | "layout" | "component" | "api";
+  type: "page" | "layout" | "component" | "api" | "context" | "hook" | "util" | "config";
 }
 
 export interface RepoAnalysis {
@@ -250,6 +252,7 @@ export interface AgentContext {
   testPlan?: TestPlan;
   testCases?: TestCase[];
   failureReports?: FailureReport[];
+  testCredentials?: { email: string; password: string };
 }
 
 export interface AgentResult<T = unknown> {

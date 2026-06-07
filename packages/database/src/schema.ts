@@ -52,6 +52,8 @@ export const projects = pgTable("projects", {
   name: varchar("name", { length: 255 }).notNull(),
   repoUrl: text("repo_url").notNull(),
   websiteUrl: text("website_url").notNull(),
+  testEmail: varchar("test_email", { length: 255 }),
+  testPassword: text("test_password"), // encrypted at rest
   status: projectStatusEnum("status").notNull().default("active"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

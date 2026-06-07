@@ -53,7 +53,7 @@ export class Orchestrator extends EventEmitter<OrchestratorEvents> {
   async execute(
     projectId: string,
     runId: string,
-    options: { websiteUrl: string; repoUrl: string; githubToken: string }
+    options: { websiteUrl: string; repoUrl: string; githubToken: string; testCredentials?: { email: string; password: string } }
   ): Promise<{
     results: Map<string, AgentResult>;
     status: TestRunStatus;
@@ -63,6 +63,7 @@ export class Orchestrator extends EventEmitter<OrchestratorEvents> {
       projectId,
       runId,
       websiteUrl: options.websiteUrl,
+      testCredentials: options.testCredentials,
     };
 
     const updateStatus = (status: TestRunStatus) => {
