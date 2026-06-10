@@ -76,11 +76,12 @@ router.get("/github/callback", async (req: Request, res: Response, next: NextFun
 
     // Upsert user in database with githubId, encrypted token, etc.
     const db = getDb();
+    const displayName = userData.name || userData.login || "GitHub User";
     const [user] = await db
       .insert(users)
       .values({
-        email: email,
-        name: userData.name || userData.login,
+        email: email!,
+        name: displayName,
         githubId: String(userData.id),
         avatarUrl: userData.avatar_url,
         githubToken: encrypt(tokenData.access_token),
@@ -88,8 +89,8 @@ router.get("/github/callback", async (req: Request, res: Response, next: NextFun
       .onConflictDoUpdate({
         target: users.githubId,
         set: {
-          email: email,
-          name: userData.name || userData.login,
+          email: email!,
+          name: displayName,
           avatarUrl: userData.avatar_url,
           githubToken: encrypt(tokenData.access_token),
         },
