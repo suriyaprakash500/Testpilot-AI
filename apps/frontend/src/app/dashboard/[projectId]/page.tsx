@@ -784,6 +784,10 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ projec
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [runningTest, setRunningTest] = useState(false);
+  const [credEmail, setCredEmail] = useState("");
+  const [credPassword, setCredPassword] = useState("");
+  const [savingCreds, setSavingCreds] = useState(false);
+  const [credsSaved, setCredsSaved] = useState(false);
 
   const loadData = async () => {
     if (isReserved || !isUuid) {
@@ -933,6 +937,76 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ projec
         >
           Visit Website
         </a>
+      </div>
+
+      {/* Test Credentials Settings */}
+      <div className="glass p-4">
+        <div className="flex items-center justify-between mb-3">
+          <div>
+            <h3 className="text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>
+              Test Credentials
+            </h3>
+            <p className="text-[10px] mt-0.5" style={{ color: "var(--text-muted)" }}>
+              Auto-login before E2E tests on auth-protected apps
+            </p>
+          </div>
+          {credsSaved && (
+            <span className="text-[10px] font-semibold text-emerald-400 animate-fade-in">✓ Saved</span>
+          )}
+        </div>
+        <div className="flex items-end gap-3">
+          <div className="flex-1">
+            <label className="text-[10px] font-mono block mb-1" style={{ color: "var(--text-muted)" }}>Email</label>
+            <input
+              type="email"
+              placeholder={project.testEmail || "test@example.com"}
+              value={credEmail}
+              onChange={(e) => setCredEmail(e.target.value)}
+              className="w-full px-3 py-1.5 rounded-lg text-xs outline-none transition-all"
+              style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", color: "var(--text-primary)" }}
+              onFocus={(e) => (e.target.style.borderColor = "var(--accent)")}
+              onBlur={(e) => (e.target.style.borderColor = "var(--border)")}
+            />
+          </div>
+          <div className="flex-1">
+            <label className="text-[10px] font-mono block mb-1" style={{ color: "var(--text-muted)" }}>Password</label>
+            <input
+              type="password"
+              placeholder={project.testEmail ? "••••••••" : "Password"}
+              value={credPassword}
+              onChange={(e) => setCredPassword(e.target.value)}
+              className="w-full px-3 py-1.5 rounded-lg text-xs outline-none transition-all"
+              style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", color: "var(--text-primary)" }}
+              onFocus={(e) => (e.target.style.borderColor = "var(--accent)")}
+              onBlur={(e) => (e.target.style.borderColor = "var(--border)")}
+            />
+          </div>
+          <button
+            disabled={savingCreds || (!credEmail && !credPassword)}
+            onClick={async () => {
+              setSavingCreds(true);
+              setCredsSaved(false);
+              try {
+                const updates: any = {};
+                if (credEmail) updates.testEmail = credEmail;
+                if (credPassword) updates.testPassword = credPassword;
+                await api.updateProject(projectId, updates);
+                setCredsSaved(true);
+                setCredEmail("");
+                setCredPassword("");
+                setTimeout(() => setCredsSaved(false), 3000);
+              } catch (err: any) {
+                alert(err.message || "Failed to save credentials");
+              } finally {
+                setSavingCreds(false);
+              }
+            }}
+            className="px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer"
+            style={{ background: "var(--gradient-1)", color: "white", opacity: savingCreds || (!credEmail && !credPassword) ? 0.5 : 1 }}
+          >
+            {savingCreds ? "Saving..." : "Save"}
+          </button>
+        </div>
       </div>
 
       {/* Runs */}

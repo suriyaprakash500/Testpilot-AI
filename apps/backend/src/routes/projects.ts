@@ -456,6 +456,38 @@ router.get("/:id", requireAuth, async (req: AuthRequest, res: Response, next: Ne
 });
 
 /**
+ * PATCH /api/projects/:id
+ * Update project settings (e.g. test credentials)
+ */
+router.patch("/:id", requireAuth, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const id = req.params["id"] as string;
+    if (!isUuid(id)) {
+      throw new NotFoundError("Project", id);
+    }
+
+    const db = getDb();
+    const [existing] = await db.select().from(projects).where(eq(projects.id, id));
+    if (!existing) throw new NotFoundError("Project", id);
+    if (existing.userId !== req.userId!) {
+      return res.status(403).json({ success: false, error: "Unauthorized" });
+    }
+
+    const updates: Record<string, any> = {};
+    if (req.body.testEmail !== undefined) updates.testEmail = req.body.testEmail || null;
+    if (req.body.testPassword !== undefined) updates.testPassword = req.body.testPassword ? encrypt(req.body.testPassword) : null;
+    if (req.body.websiteUrl !== undefined) updates.websiteUrl = req.body.websiteUrl;
+    updates.updatedAt = new Date();
+
+    const [updated] = await db.update(projects).set(updates).where(eq(projects.id, id)).returning();
+
+    res.json({ success: true, data: updated });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
  * DELETE /api/projects/:id
  * Delete a project
  */

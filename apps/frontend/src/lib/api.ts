@@ -32,6 +32,7 @@ export interface Project {
   name: string;
   repoUrl: string;
   websiteUrl: string;
+  testEmail?: string | null;
   status: string;
   createdAt: string;
 }
@@ -78,6 +79,13 @@ export const api = {
     await fetchApi(`/api/projects/${id}`, {
       method: "DELETE",
     });
+  },
+  updateProject: async (id: string, data: { testEmail?: string; testPassword?: string }): Promise<Project> => {
+    const res = await fetchApi(`/api/projects/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    });
+    return res.data;
   },
   deleteRun: async (runId: string): Promise<void> => {
     await fetchApi(`/api/test-runs/run/${runId}`, {
