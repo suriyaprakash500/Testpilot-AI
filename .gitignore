@@ -12,3 +12,6 @@ repos/
 coverage/
 .DS_Store
 Thumbs.db
+
+# Test run screenshot artifacts
+apps/backend/*.png
