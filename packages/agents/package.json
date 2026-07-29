@@ -18,7 +18,9 @@
     "@testpilot/playwright-engine": "workspace:*",
     "@testpilot/github-engine": "workspace:*",
     "@testpilot/queue": "workspace:*",
-    "eventemitter3": "^5.0.0"
+    "eventemitter3": "^5.0.0",
+    "groq-sdk": "^0.8.0",
+    "zod": "^3.24.0"
   },
   "devDependencies": {
     "typescript": "^5.7.0",

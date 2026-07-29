@@ -1,31 +1,15 @@
-FROM mcr.microsoft.com/playwright:v1.49.0 AS base
-RUN npm install -g pnpm@9.15.0
+FROM mcr.microsoft.com/playwright/python:v1.42.0-jammy
 
 WORKDIR /app
 
-# Install dependencies
-COPY package.json pnpm-workspace.yaml pnpm-lock.yaml* ./
-COPY packages/types/package.json ./packages/types/
-COPY packages/shared/package.json ./packages/shared/
-COPY packages/database/package.json ./packages/database/
-COPY packages/queue/package.json ./packages/queue/
-COPY packages/prompt-engine/package.json ./packages/prompt-engine/
-COPY packages/agents/package.json ./packages/agents/
-COPY packages/playwright-engine/package.json ./packages/playwright-engine/
-COPY packages/github-engine/package.json ./packages/github-engine/
-COPY packages/reporting/package.json ./packages/reporting/
-COPY apps/backend/package.json ./apps/backend/
+# Copy requirements and install dependencies
+COPY apps/backend/requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
 
-RUN pnpm install --frozen-lockfile
+# Copy application source code
+COPY apps/backend/app ./app
 
-# Copy source and build
-COPY tsconfig.base.json ./
-COPY packages/ ./packages/
-COPY apps/backend/ ./apps/backend/
-
-RUN pnpm -r run build
-
-ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
-
+ENV PORT=3001
 EXPOSE 3001
-CMD ["node", "apps/backend/dist/index.js"]
+
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "3001"]
