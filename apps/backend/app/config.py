@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     repos_dir: str = "./repos"
 
     class Config:
-        env_file = ".env"
+        env_file = [".env", "../../.env", "../.env"]
         extra = "ignore"
 
 settings = Settings()

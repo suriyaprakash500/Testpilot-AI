@@ -777,7 +777,7 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ projec
   
   const reservedPaths = ["agents", "pipelines", "repos", "sessions", "debugger"];
   const isReserved = reservedPaths.includes(projectId);
-  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(projectId);
+  const isValidProjectId = Boolean(projectId && /^[a-zA-Z0-9_-]+$/.test(projectId));
 
   const [project, setProject] = useState<Project | null>(null);
   const [runs, setRuns] = useState<TestRun[]>([]);
@@ -790,7 +790,7 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ projec
   const [credsSaved, setCredsSaved] = useState(false);
 
   const loadData = async () => {
-    if (isReserved || !isUuid) {
+    if (isReserved || !isValidProjectId) {
       setLoading(false);
       return;
     }
@@ -813,7 +813,7 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ projec
       setLoading(false);
       return;
     }
-    if (!isUuid) {
+    if (!isValidProjectId) {
       setError("Invalid Project ID format");
       setLoading(false);
       return;
@@ -827,10 +827,10 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ projec
     }, 5000);
 
     return () => clearInterval(timer);
-  }, [projectId, runs, isReserved, isUuid]);
+  }, [projectId, runs, isReserved, isValidProjectId]);
 
   const handleRunTests = async () => {
-    if (isReserved || !isUuid) return;
+    if (isReserved || !isValidProjectId) return;
     setRunningTest(true);
     try {
       await api.triggerRun(projectId);
