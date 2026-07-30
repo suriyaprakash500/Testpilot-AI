@@ -1,110 +1,84 @@
 # TestPilot AI — System Architecture
 
-This document describes the architectural design, directory structure, data models, and agent execution pipeline of TestPilot AI. It is intended for co-developers to understand the subsystems, data flows, and design choices.
+This document describes the architectural design, directory structure, data models, and agent execution pipeline of TestPilot AI.
 
 ---
 
 ## 1. System Overview & Monorepo Structure
 
-TestPilot AI is structured as a TypeScript monorepo managed via `pnpm` workspaces. It consists of two application entry points (`apps/`) and a set of shared, decoupled packages (`packages/`) to isolate concerns.
+TestPilot AI is built with a **Python FastAPI + LangGraph Agentic Backend** (`apps/backend`) and a **React / Next.js 16 Dark Obsidian IDE Dashboard** (`apps/frontend`).
 
 ```
 testpilot-ai/
 ├── apps/
-│   ├── backend/            # Express API + WebSocket server (broadcasting job progress)
-│   └── frontend/           # Next.js 15 dashboard (visualizing runs, logs, and failure analysis)
-├── packages/
-│   ├── agents/             # Core multi-agent pipeline orchestrator
-│   ├── database/           # Drizzle ORM + PostgreSQL client & schemas
-│   ├── playwright-engine/  # Isolated browser management & test execution
-│   ├── github-engine/      # Repository cloning and Octokit-based sync (GitHub Issues)
-│   ├── prompt-engine/      # LLM clients, template management, & connection-resilient caching
-│   ├── queue/              # BullMQ queue & worker abstractions backed by Redis
-│   ├── shared/             # General utilities, custom logger, cryptographic helpers, custom errors
-│   └── types/              # Unified TypeScript definitions & Zod runtime validation schemas
+│   ├── backend/                # Python 3.12 FastAPI + LangGraph Backend
+│   │   ├── app/
+│   │   │   ├── main.py         # FastAPI Entry Point (REST + WebSockets)
+│   │   │   ├── config.py       # pydantic-settings Configuration
+│   │   │   ├── models.py       # Pydantic v2 Domain Schemas & Contracts
+│   │   │   ├── graph/          # LangGraph StateGraph Agent Engine
+│   │   │   │   ├── state.py    # TestPilotState TypedDict
+│   │   │   │   ├── nodes.py    # Multi-step Agent Reasoning Nodes
+│   │   │   │   ├── edges.py    # Conditional Routing Functions
+│   │   │   │   ├── tools.py    # LangChain @tool Functions
+│   │   │   │   └── pipeline.py # StateGraph Assembly & Async Executor
+│   │   │   ├── memory/         # ChromaDB Vector Store Persistence
+│   │   │   ├── auth/           # Enterprise Authentication Subsystem
+│   │   │   ├── core/           # ConnectionManager WS Streaming & APM
+│   │   │   ├── tools/          # Physical Tool Handlers & Registry
+│   │   │   └── api/            # REST API Routers
+│   │   ├── tests/              # Pytest Test Suites
+│   │   └── requirements.txt
+│   └── frontend/               # Next.js 16 Dashboard UI
 ```
 
 ---
 
-## 2. Multi-Agent Pipeline & The Orchestrator
+## 2. Multi-Agent Pipeline & LangGraph `StateGraph`
 
-The system relies on an event-driven orchestrator (`Orchestrator` inside `packages/agents`) that drives a sequential multi-agent execution pipeline. When a test run is started, the Orchestrator initiates each agent in turn, passing the accumulating `AgentContext` and persisting statuses to the database.
+The pipeline is modeled as a **LangGraph `StateGraph`**. Shared state (`TestPilotState`) flows through nodes sequentially, with conditional edges managing fail-fast branching and self-healing retry loops.
 
 ```mermaid
-graph TD
-    A[Start Run] --> B[RepoAnalysisAgent]
-    B -->|Persists metadata| C[TestPlanningAgent]
-    C -->|Prioritizes scenarios| D[PlaywrightGenAgent]
-    D -->|Writes Playwright code| E[BrowserExecutionAgent]
-    E -->|Runs tests & saves logs| F{Any failures?}
-    F -->|Yes| G[FailureAnalysisAgent]
-    F -->|No| H[GitHubIntegrationAgent]
-    G -->|Extracts root cause| H
-    H -->|Creates GitHub Issues| I[Complete Run]
+flowchart TD
+    FE["React / Next.js 16 Frontend"] -->|REST / WebSocket| API["FastAPI Backend Server"]
+    API --> GRAPH["LangGraph StateGraph Orchestrator"]
+
+    subgraph Pipeline["LangGraph Agent Pipeline"]
+        GRAPH --> AUTH["1. auth_check_node"]
+        AUTH -->|pass| REPO["2. repo_analysis_node"]
+        AUTH -->|fail| ABORT["abort_node"]
+        REPO --> PLAN["3. test_planning_node"]
+        PLAN --> GEN["4. playwright_gen_node"]
+        GEN --> EXEC["5. browser_execution_node"]
+        EXEC -->|all pass| PR["6. github_pr_node"]
+        EXEC -->|failures| HEAL["7. failure_analysis_node"]
+        HEAL --> EXEC
+        PR --> DONE["END State"]
+    end
+
+    subgraph Capabilities["Capabilities & Memory"]
+        HEAL -->|search & store| MEM["ChromaDB Vector Store"]
+    end
 ```
 
-### Agent Roles
+### Agent Node Roles
 
-1. **`RepoAnalysisAgent`**: Clones/pulls the target project's Git repository. Detects frameworks, entry points, dependencies, routes, and APIs to build a project profile.
-2. **`TestPlanningAgent`**: Uses Groq LLM (Llama 3.3 70B) to analyze the project profile and generate logical E2E test scenarios.
-3. **`PlaywrightGenAgent`**: Translates the logical test scenarios into runnable Playwright test code blocks.
-4. **`BrowserExecutionAgent`**: Spawns headless browser pages, executes the dynamically generated Playwright test code inside custom-sandboxed contexts, and saves trace files, screenshots, and logs.
-5. **`FailureAnalysisAgent`**: If any test cases fail, it extracts the console logs, trace files, and DOM snapshots to perform root-cause analysis and suggest code-level fixes.
-6. **`GitHubIntegrationAgent`**: Synchronizes execution results to the target repository (creating detailed GitHub Issues for any failures).
-
----
-
-## 3. Database Schema & Data Persistence
-
-The data persistence layer is handled by **PostgreSQL** using the **Drizzle ORM** (defined in `packages/database/src/schema.ts`).
-
-### Schema Entities
-
-```mermaid
-erDiagram
-    users ||--o{ projects : owns
-    projects ||--o{ test_runs : runs
-    projects ||--o{ repositories : has-profile
-    test_runs ||--o{ test_cases : contains
-    test_runs ||--o{ reports : generates
-    test_cases ||--o{ failures : has-details
-```
-
-* **`users`**: User account credentials, encrypted GitHub access tokens, and profile data.
-* **`projects`**: Configured repositories and target `websiteUrl`s to run tests against.
-* **`repositories`**: The repository profile detected during the `RepoAnalysis` step (entry points, framework, routes, dependencies).
-* **`test_runs`**: The lifecycle record of a test execution suite. Tracks statuses: `pending` → `analyzing` → `planning` → `generating` → `executing` → `analyzing_failures` → `reporting` → `completed` / `failed`.
-* **`test_cases`**: Individual Playwright test codes, execution logs, screenshot paths, trace paths, and durations.
-* **`failures`**: Failure classification (`assertion`, `timeout`, `selector`, `network`, `script`), message, stack trace, root cause analysis, suggested fix, and DOM snapshots.
+1. **`auth_check_node`**: Pre-authenticates sessions using `AuthManager` (heuristic DOM scanning) with fail-fast verification before test execution begins.
+2. **`repo_analysis_node`**: Analyzes repository structure, routes, entry points, and framework configuration.
+3. **`test_planning_node`**: Combines repo structure and live DOM interactive node scans to plan resilient E2E scenarios.
+4. **`playwright_gen_node`**: Generates clean Playwright Python test scripts.
+5. **`browser_execution_node`**: Executes test suites using `playwright.async_api` in isolated browser sandboxes.
+6. **`failure_analysis_node`**: When locator drift occurs:
+   - Queries ChromaDB vector memory for past fixes.
+   - Inspects live DOM state to derive replacement locators.
+   - Saves learned fixes to vector store for cross-run learning.
+7. **`github_pr_node`**: Opens GitHub Pull Requests containing generated and self-healed test suites.
+8. **`abort_node`**: Handles fail-fast terminations with clear error messages.
 
 ---
 
-## 4. Real-time Status Syncing (WebSockets & REST)
+## 3. Realtime Status Syncing (WebSockets & REST)
 
-* **Triggering Runs**: When a user starts a run manually (via the frontend UI), the frontend calls `POST /api/test-runs/:projectId/start`. The backend starts the pipeline asynchronously and returns a `202 Accepted` status with a `runId`.
-* **Progress Updates**: As the Orchestrator runs, it emits status and progress events (`status` and `event` events). The Express-WebSocket server (`apps/backend/src/ws/handler.ts`) broadcasts these events to all clients subscribed to that project's channel.
-* **Database Coherency**: All status transitions (`planning`, `executing`, etc.) are written sequentially to the database, ensuring that if a user reloads the dashboard, the state matches perfectly.
-
----
-
-## 5. Key Reliability Safeguards & Design Decisions
-
-### 1. Robust E2E Code Parsing
-Playwright code written by LLMs often includes trailing config parameters, imports, or comments (e.g. `, { timeout: 30000 });`). Rather than using fragile regular expressions, the runner uses a stateful brace-matching scanner (`createTestFunction` in `packages/playwright-engine`) to extract the exact function body, preventing `SyntaxError: Unexpected token ')'` during evaluation.
-
-### 2. Sandbox Expect Mocks
-Because the extracted test code executes dynamically inside an evaluated context (`new Function("page", "expect", ...)`), standard Playwright `expect` assertions (which are async and chainable) are mocked inside the runner. The custom mock supports:
-- `toBeVisible()`
-- `toHaveTitle(expected)`
-- `toHaveURL(expected)`
-- `toContainText(expected)`
-- `toHaveCount(expected)`
-- `toBeDisabled()` / `toBeEnabled()`
-
-This prevents `TypeError: expect(...).toHaveTitle is not a function` and translates Playwright assertions into clean, caught exceptions for the failure analyzer.
-
-### 3. Redis Connection Resilience
-To support development environments running without Redis, the `ioredis` client in `packages/prompt-engine` has a suppressed error listener (`.on("error")`). This prevents unhandled connection errors from crashing the main Node.js process and falls back gracefully to a non-cached completion mode.
-
-### 4. Git Terminal Non-Blocking
-To prevent SimpleGit from opening interactive CLI prompts for usernames or passwords on invalid/expired tokens, all Git processes run with `process.env.GIT_TERMINAL_PROMPT = "0"`. This guarantees failed checkouts fail immediately instead of hanging backend workers.
+* **Triggering Runs**: The frontend sends `POST /api/test-runs/:projectId/start`. The backend spawns `run_pipeline` asynchronously.
+* **WebSocket Streaming**: As nodes execute, `ConnectionManager` broadcasts `NODE_EVENT` status updates to all connected clients over `/ws`.
+* **Cross-Run Learning**: ChromaDB vector store persists selector patterns and app quirks across runs in `./data/chromadb`.

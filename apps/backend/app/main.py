@@ -5,6 +5,7 @@ from app.config import settings
 from app.api.auth import router as auth_router
 from app.api.projects import router as projects_router
 from app.api.test_runs import router as test_runs_router
+from app.core.ws_manager import ws_manager
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("main")
@@ -31,11 +32,11 @@ async def health_check():
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
-    await websocket.accept()
-    logger.info("WebSocket client connected")
+    await ws_manager.connect(websocket)
     try:
         while True:
             data = await websocket.receive_text()
             await websocket.send_json({"type": "ack", "data": data})
     except WebSocketDisconnect:
-        logger.info("WebSocket client disconnected")
+        ws_manager.disconnect(websocket)
+

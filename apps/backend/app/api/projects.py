@@ -2,6 +2,7 @@ import uuid
 import logging
 from typing import Dict, Any, List
 from fastapi import APIRouter, HTTPException
+from app.auth.credential_store import credential_store
 
 logger = logging.getLogger("projects-router")
 router = APIRouter(prefix="/api/projects", tags=["projects"])
@@ -10,9 +11,10 @@ router = APIRouter(prefix="/api/projects", tags=["projects"])
 projects_db: List[Dict[str, Any]] = [
     {
         "id": "proj-demo-1",
-        "name": "TestPilot AI Demo",
-        "repoUrl": "https://github.com/suriyaprakash500/Testpilot-AI",
+        "name": "Stellaris",
+        "repoUrl": "https://github.com/suriyaprakash500/Stellaris",
         "websiteUrl": "http://localhost:3000",
+        "testEmail": "testuser@example.com",
         "status": "active",
         "createdAt": "2026-07-29T12:00:00Z"
     }
@@ -28,7 +30,9 @@ async def list_projects():
 async def create_project(data: dict):
     repo_url = data.get("repoUrl", "")
     website_url = data.get("websiteUrl", "")
-    name = data.get("name") or repo_url.split("/")[-1].replace(".git", "")
+    test_email = data.get("testEmail")
+    test_password = data.get("testPassword")
+    name = data.get("name") or repo_url.split("/")[-1].replace(".git", "") or "New Project"
     project_id = str(uuid.uuid4())
     
     new_project = {
@@ -36,10 +40,15 @@ async def create_project(data: dict):
         "name": name,
         "repoUrl": repo_url,
         "websiteUrl": website_url,
+        "testEmail": test_email,
         "status": "active",
         "createdAt": "2026-07-29T12:00:00Z"
     }
     projects_db.append(new_project)
+
+    if test_email and test_password:
+        await credential_store.set_credential(project_id, test_email, test_password)
+
     return {"success": True, "data": new_project}
 
 @router.get("/analytics")
@@ -66,7 +75,7 @@ async def get_analytics():
             "recentRuns": [
                 {
                     "id": "run-101",
-                    "projectName": "TestPilot AI Demo",
+                    "projectName": "Stellaris",
                     "status": "completed",
                     "passedCases": 8,
                     "failedCases": 0,
@@ -135,13 +144,51 @@ async def get_repositories():
 async def get_project(project_id: str):
     project = next((p for p in projects_db if p["id"] == project_id), None)
     if not project:
-        # Fallback for dynamic UUID routes or demo projects
+        # Dynamically create and register project in memory if missing
         project = {
             "id": project_id,
-            "name": "TestPilot AI Demo",
-            "repoUrl": "https://github.com/suriyaprakash500/Testpilot-AI",
+            "name": "Stellaris",
+            "repoUrl": "https://github.com/suriyaprakash500/Stellaris",
             "websiteUrl": "http://localhost:3000",
+            "testEmail": None,
             "status": "active",
             "createdAt": "2026-07-29T12:00:00Z"
         }
+        projects_db.append(project)
     return {"success": True, "data": project}
+
+@router.patch("/{project_id}")
+async def update_project(project_id: str, data: dict):
+    project = next((p for p in projects_db if p["id"] == project_id), None)
+    if not project:
+        project = {
+            "id": project_id,
+            "name": "Stellaris",
+            "repoUrl": "https://github.com/suriyaprakash500/Stellaris",
+            "websiteUrl": "http://localhost:3000",
+            "testEmail": None,
+            "status": "active",
+            "createdAt": "2026-07-29T12:00:00Z"
+        }
+        projects_db.append(project)
+
+    test_email = data.get("testEmail")
+    test_password = data.get("testPassword")
+
+    if test_email:
+        project["testEmail"] = test_email
+
+    if test_email or test_password:
+        current_creds = await credential_store.get_credential(project_id) or {}
+        email_to_save = test_email or current_creds.get("username", "")
+        pass_to_save = test_password or current_creds.get("password", "")
+        await credential_store.set_credential(project_id, email_to_save, pass_to_save)
+        logger.info(f"Updated test credentials for project {project_id}")
+
+    return {"success": True, "data": project}
+
+@router.delete("/{project_id}")
+async def delete_project(project_id: str):
+    global projects_db
+    projects_db = [p for p in projects_db if p["id"] != project_id]
+    return {"success": True, "data": {"deleted": True}}

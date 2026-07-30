@@ -13,5 +13,13 @@ coverage/
 .DS_Store
 Thumbs.db
 
+# Python & Pytest
+__pycache__/
+*.pyc
+.pytest_cache/
+venv/
+.venv/
+data/
+
 # Test run screenshot artifacts
 apps/backend/*.png

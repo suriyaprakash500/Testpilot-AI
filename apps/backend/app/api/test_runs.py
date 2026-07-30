@@ -2,7 +2,8 @@ import uuid
 import logging
 from typing import Dict, Any, List
 from fastapi import APIRouter, HTTPException
-from app.agents.supervisor import supervisor
+import asyncio
+from app.graph.pipeline import run_pipeline
 
 logger = logging.getLogger("test-runs-router")
 router = APIRouter(prefix="/api/test-runs", tags=["test-runs"])
@@ -72,9 +73,15 @@ async def get_run_details(run_id: str):
 
 @router.post("/{project_id}/start")
 async def start_run(project_id: str, data: dict = None):
+    from app.api.projects import projects_db
+    project = next((p for p in projects_db if p["id"] == project_id), None)
+
+    default_website = project["websiteUrl"] if project else "http://localhost:3000"
+    default_repo = project["repoUrl"] if project else "https://github.com/suriyaprakash500/Testpilot-AI"
+
     run_id = str(uuid.uuid4())
-    website_url = (data or {}).get("websiteUrl", "http://localhost:3000")
-    repo_url = (data or {}).get("repoUrl", "https://github.com/suriyaprakash500/Testpilot-AI")
+    website_url = (data or {}).get("websiteUrl") or default_website
+    repo_url = (data or {}).get("repoUrl") or default_repo
 
     new_run = {
         "id": run_id,
@@ -87,11 +94,11 @@ async def start_run(project_id: str, data: dict = None):
     }
     runs_db.insert(0, new_run)
 
-    try:
-        result = await supervisor.execute(project_id, run_id, website_url, repo_url)
-        return {"success": True, "data": {"runId": run_id, "status": result["status"]}}
-    except Exception as e:
-        return {"success": True, "data": {"runId": run_id, "status": "analyzing"}}
+    # Execute LangGraph StateGraph pipeline asynchronously
+    asyncio.create_task(run_pipeline(project_id, run_id, website_url, repo_url))
+    return {"success": True, "data": {"runId": run_id, "status": "analyzing"}}
+
+
 
 @router.delete("/run/{run_id}")
 async def delete_run(run_id: str):
