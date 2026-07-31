@@ -1,6 +1,6 @@
 # TestPilot AI
 
-> Autonomous, AI-native QA engineering platform powered by a **Python FastAPI + LangGraph StateGraph Agentic Engine** and a **React / Next.js 16 Dark-Mode Dashboard**.
+> Autonomous, AI-native QA engineering platform powered by a **Python FastAPI + LangGraph StateGraph Agentic Engine** and a **React Dashboard**.
 
 ---
 
