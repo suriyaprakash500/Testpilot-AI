@@ -1,8 +1,9 @@
 import uuid
 import logging
-from typing import Dict, Any, List
-from fastapi import APIRouter, HTTPException
 import asyncio
+from typing import Dict, Any, List
+from datetime import datetime, timezone
+from fastapi import APIRouter, HTTPException
 from app.graph.pipeline import run_pipeline
 
 logger = logging.getLogger("test-runs-router")
@@ -29,21 +30,76 @@ test_cases_db: List[Dict[str, Any]] = [
         "duration": 1250,
         "error": None,
         "logs": "Navigated to http://localhost:3000\nAssertion passed: title contains TestPilot AI",
-        "screenshotUrl": "/api/artifacts/dashboard-preview.png",
+        "screenshotUrl": None,
         "createdAt": "2026-07-29T20:00:15Z"
     },
     {
         "id": "tc-2",
         "testRunId": "run-101",
-        "name": "Self-Healing Selector Test",
+        "name": "Form Submission & Validation Test",
         "status": "passed",
         "duration": 2100,
         "error": None,
-        "logs": "Locator drift detected on button#submit\nAI Auto-Healer applied role selector: [data-testid='submit-btn']\nAssertion passed",
-        "screenshotUrl": "/api/artifacts/healed-locator.png",
+        "logs": "Filled email input\nClicked submit button\nAssertion passed",
+        "screenshotUrl": None,
         "createdAt": "2026-07-29T20:01:00Z"
     }
 ]
+
+
+def _update_run_status(run_id: str, status: str):
+    """Updates the run entry status in runs_db so the frontend can poll intermediate states."""
+    run_entry = next((r for r in runs_db if r["id"] == run_id), None)
+    if run_entry:
+        run_entry["status"] = status
+
+
+async def _execute_pipeline_and_update(project_id: str, run_id: str, website_url: str, repo_url: str):
+    """Wraps run_pipeline with a status callback to update runs_db in real-time."""
+    run_entry = next((r for r in runs_db if r["id"] == run_id), None)
+
+    try:
+        final_state = await run_pipeline(
+            project_id, run_id, website_url, repo_url,
+            on_status_change=lambda status: _update_run_status(run_id, status)
+        )
+
+        # Extract generated Playwright suite code
+        generated_code = ""
+        generated_files = final_state.get("generated_tests") or []
+        if generated_files:
+            generated_code = generated_files[0].get("code", "")
+
+        # Write execution results as test cases
+        for i, result in enumerate(final_state.get("execution_results") or []):
+            test_cases_db.append({
+                "id": f"tc-{run_id[:8]}-{i}",
+                "testRunId": run_id,
+                "name": result.get("test_name", f"Test Case {i+1}"),
+                "status": result.get("status", "passed"),
+                "duration": result.get("duration_ms", 0),
+                "error": result.get("error"),
+                "logs": result.get("logs", ""),
+                "code": generated_code,
+                "screenshotUrl": None,
+                "createdAt": datetime.now(timezone.utc).isoformat()
+            })
+
+
+        # Final status update
+        if run_entry:
+            run_entry["status"] = final_state.get("status", "completed")
+            run_entry["completedAt"] = datetime.now(timezone.utc).isoformat()
+            run_entry["prUrl"] = final_state.get("pr_url")
+
+        logger.info(f"Pipeline completed for run {run_id}: status={final_state.get('status')}")
+
+    except Exception as e:
+        logger.error(f"Pipeline failed for run {run_id}: {e}")
+        if run_entry:
+            run_entry["status"] = "failed"
+            run_entry["completedAt"] = datetime.now(timezone.utc).isoformat()
+
 
 @router.get("/{project_id}")
 async def get_project_runs(project_id: str):
@@ -88,16 +144,14 @@ async def start_run(project_id: str, data: dict = None):
         "projectId": project_id,
         "status": "analyzing",
         "trigger": "manual",
-        "startedAt": "2026-07-29T22:00:00Z",
+        "startedAt": datetime.now(timezone.utc).isoformat(),
         "completedAt": None,
-        "createdAt": "2026-07-29T22:00:00Z"
+        "createdAt": datetime.now(timezone.utc).isoformat()
     }
     runs_db.insert(0, new_run)
 
-    # Execute LangGraph StateGraph pipeline asynchronously
-    asyncio.create_task(run_pipeline(project_id, run_id, website_url, repo_url))
+    asyncio.create_task(_execute_pipeline_and_update(project_id, run_id, website_url, repo_url))
     return {"success": True, "data": {"runId": run_id, "status": "analyzing"}}
-
 
 
 @router.delete("/run/{run_id}")

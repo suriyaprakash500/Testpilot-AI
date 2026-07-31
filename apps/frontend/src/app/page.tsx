@@ -2,10 +2,13 @@
 
 import { useState } from "react";
 import { Zap, GitBranch, Globe, ArrowRight, Shield, BarChart3, Bot } from "lucide-react";
+import { api } from "../lib/api";
 
 export default function HomePage() {
   const [repoUrl, setRepoUrl] = useState("");
   const [websiteUrl, setWebsiteUrl] = useState("");
+  const [testing, setTesting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   return (
     <div className="min-h-screen" style={{ background: "var(--bg-primary)" }}>
@@ -135,21 +138,38 @@ export default function HomePage() {
                 </div>
               </div>
 
+              {error && (
+                <p className="text-xs text-left" style={{ color: "var(--error)" }}>
+                  {error}
+                </p>
+              )}
+
               <button
                 id="start-testing-btn"
                 className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-lg text-sm font-semibold transition-all duration-200"
                 style={{
                   background: "var(--gradient-1)",
                   color: "white",
-                  opacity: repoUrl && websiteUrl ? 1 : 0.5,
+                  opacity: repoUrl && websiteUrl && !testing ? 1 : 0.5,
                 }}
-                disabled={!repoUrl || !websiteUrl}
-                onClick={() => {
-                  // TODO: call API to create project
-                  window.location.href = `/dashboard`;
+                disabled={!repoUrl || !websiteUrl || testing}
+                onClick={async () => {
+                  setTesting(true);
+                  setError(null);
+                  try {
+                    // Pre-authenticate locally if no token exists
+                    if (!localStorage.getItem("token")) {
+                      localStorage.setItem("token", "dev-mock-jwt-token");
+                    }
+                    const proj = await api.createProject({ repoUrl, websiteUrl });
+                    window.location.href = `/dashboard/${proj.id}`;
+                  } catch (err: any) {
+                    setError(err.message || "Failed to start testing workspace.");
+                    setTesting(false);
+                  }
                 }}
               >
-                Start Testing
+                {testing ? "Initializing Workspace..." : "Start Testing"}
                 <ArrowRight size={16} />
               </button>
             </div>

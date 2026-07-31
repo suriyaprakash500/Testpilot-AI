@@ -20,11 +20,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   const navItems = [
     { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
-    { label: "Agents", href: "/dashboard/agents", icon: Bot },
-    { label: "Test Pipelines", href: "/dashboard/pipelines", icon: GitBranch },
-    { label: "Repositories", href: "/dashboard/repos", icon: FolderGit },
-    { label: "Live Sessions", href: "/dashboard/sessions", icon: Tv },
-    { label: "AI Debugger", href: "/dashboard/debugger", icon: Terminal },
     { label: "Reports", href: "/dashboard/analytics", icon: BarChart3 },
     { label: "Settings", href: "/dashboard/settings", icon: Settings },
   ];
@@ -131,15 +126,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
           {/* Nav Actions */}
           <div className="flex items-center gap-4">
-            {/* Live Agent indicator */}
-            <div 
-              className="flex items-center gap-2 px-3 py-1 rounded-full text-xs font-medium border border-violet-500/20"
-              style={{ background: "var(--accent-glow)", color: "var(--accent-hover)" }}
-            >
-              <span className="w-1.5 h-1.5 rounded-full pulse-ring-active" style={{ background: "var(--accent-purple)" }} />
-              <span>3 Agents Operating</span>
-            </div>
-
             {/* Notification Bell */}
             <button className="p-1.5 rounded-md border transition-all hover:bg-zinc-950 relative" style={{ borderColor: "var(--border)", color: "var(--text-secondary)" }}>
               <Bell size={14} />

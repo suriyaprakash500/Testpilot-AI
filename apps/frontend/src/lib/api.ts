@@ -55,6 +55,7 @@ export interface TestCase {
   duration: number;
   error: string | null;
   logs: string | null;
+  code?: string;
   screenshotUrl: string | null;
   createdAt: string;
 }
