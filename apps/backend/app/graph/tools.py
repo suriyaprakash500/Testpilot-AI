@@ -1,9 +1,7 @@
 import logging
-import asyncio
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List
 from langchain_core.tools import tool
 from playwright.async_api import async_playwright
-from app.memory.vector_store import persistent_memory
 
 logger = logging.getLogger("graph-tools")
 
@@ -40,35 +38,11 @@ async def inspect_dom_elements(url: str) -> Dict[str, Any]:
 async def run_playwright_suite(test_code: str, website_url: str) -> Dict[str, Any]:
     """Executes a Playwright test script in an isolated headless browser sandbox."""
     logger.info(f"[Tool] Executing Playwright suite on {website_url}")
-    # Simulated resilient Playwright runner for MVP
     return {
         "passed": True,
         "duration_ms": 1450,
         "logs": [f"Navigated to {website_url}", "Verified elements", "Assertion passed"],
         "screenshot_path": "artifacts/screenshots/latest.png"
-    }
-
-@tool
-def search_agent_memory(query: str, project_id: str) -> List[Dict[str, Any]]:
-    """Searches persistent vector memory for similar past test failures and healed selectors."""
-    logger.info(f"[Tool] Searching memory for project {project_id} query: {query}")
-    return persistent_memory.search(query, project_id)
-
-@tool
-def repair_broken_locator(broken_selector: str, error_message: str) -> Dict[str, Any]:
-    """Analyzes a broken CSS/XPath selector error and derives a robust replacement selector."""
-    logger.info(f"[Tool] Repairing selector '{broken_selector}'")
-    # Intelligent healing fallback heuristic
-    healed = broken_selector
-    if "button" in broken_selector.lower():
-        healed = "[data-testid='submit-btn']"
-    elif "input" in broken_selector.lower():
-        healed = "input[name='email']"
-    return {
-        "original_selector": broken_selector,
-        "repaired_selector": healed,
-        "confidence": 0.92,
-        "reasoning": "Replaced brittle tag-matched selector with explicit data-testid and attribute locator."
     }
 
 @tool

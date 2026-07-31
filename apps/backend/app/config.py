@@ -8,7 +8,6 @@ class Settings(BaseSettings):
     backend_url: str = "http://localhost:3001"
     frontend_url: str = "http://localhost:3000"
     
-    database_url: str = Field(default="postgresql+asyncpg://postgres:postgres@localhost:5432/postgres")
     groq_api_key: str = Field(default="dummy-groq-key")
     jwt_secret: str = Field(default="super-secret-jwt-key-min-32-characters")
     github_client_id: str = Field(default="")

@@ -9,11 +9,10 @@ from app.graph.nodes import (
     test_planning_node,
     playwright_gen_node,
     browser_execution_node,
-    failure_analysis_node,
     github_pr_node,
     abort_node
 )
-from app.graph.edges import route_after_auth, route_after_execution
+from app.graph.edges import route_after_auth
 
 logger = logging.getLogger("graph-pipeline")
 
@@ -21,24 +20,22 @@ def build_pipeline():
     """Assembles and compiles the LangGraph StateGraph pipeline."""
     graph = StateGraph(TestPilotState)
 
-    # 1. Register Nodes
+    # Register Nodes
     graph.add_node("auth_check", auth_check_node)
     graph.add_node("repo_analysis", repo_analysis_node)
     graph.add_node("test_planning", test_planning_node)
     graph.add_node("playwright_gen", playwright_gen_node)
     graph.add_node("browser_execution", browser_execution_node)
-    graph.add_node("failure_analysis", failure_analysis_node)
     graph.add_node("github_pr", github_pr_node)
     graph.add_node("abort", abort_node)
 
-    # 2. Wire Edges & Transitions
+    # Wire Edges
     graph.set_entry_point("auth_check")
     graph.add_conditional_edges("auth_check", route_after_auth)
     graph.add_edge("repo_analysis", "test_planning")
     graph.add_edge("test_planning", "playwright_gen")
     graph.add_edge("playwright_gen", "browser_execution")
-    graph.add_conditional_edges("browser_execution", route_after_execution)
-    graph.add_edge("failure_analysis", "browser_execution")
+    graph.add_edge("browser_execution", "github_pr")
     graph.add_edge("github_pr", END)
     graph.add_edge("abort", END)
 
@@ -58,13 +55,11 @@ async def run_pipeline(project_id: str, run_id: str, website_url: str, repo_url:
         "website_url": website_url,
         "status": "analyzing",
         "error": None,
-        "retry_count": 0,
         "auth_session": None,
         "repo_analysis": None,
         "test_plan": None,
         "generated_tests": None,
         "execution_results": None,
-        "failure_analysis": None,
         "pr_url": None,
         "messages": []
     }

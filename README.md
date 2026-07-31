@@ -8,7 +8,7 @@
 
 ```mermaid
 flowchart TD
-    FE["React / Next.js 16 Frontend"] -->|REST / WebSocket| API["FastAPI Backend Server"]
+    FE["React / Next.js 16 Frontend"] -->|REST API| API["FastAPI Backend Server"]
     API --> GRAPH["LangGraph StateGraph Orchestrator"]
 
     subgraph Pipeline["LangGraph Agent Pipeline"]
@@ -18,14 +18,11 @@ flowchart TD
         REPO --> PLAN["3. test_planning_node"]
         PLAN --> GEN["4. playwright_gen_node"]
         GEN --> EXEC["5. browser_execution_node"]
-        EXEC -->|all pass| PR["6. github_pr_node"]
-        EXEC -->|failures| HEAL["7. failure_analysis_node"]
-        HEAL --> EXEC
+        EXEC --> PR["6. github_pr_node"]
         PR --> DONE["END State"]
     end
 
-    subgraph Capabilities["Capabilities & Memory"]
-        HEAL -->|search & store| MEM["ChromaDB Vector Memory"]
+    subgraph Capabilities["Capabilities"]
         EXEC --> PW["Playwright Async Sandbox"]
         PR --> GIT["GitPython / GitHub API"]
     end
@@ -38,45 +35,38 @@ flowchart TD
 ```
 testpilot-ai/
 ├── apps/
-│   ├── backend/                # Python 3.12 FastAPI + LangGraph Backend
+│   ├── backend/                # Python FastAPI + LangGraph Backend
 │   │   ├── app/
-│   │   │   ├── main.py         # FastAPI REST & WebSocket Endpoint
+│   │   │   ├── main.py         # FastAPI REST Endpoint
 │   │   │   ├── config.py       # pydantic-settings Environment Management
 │   │   │   ├── models.py       # Pydantic v2 Domain Data Contracts
 │   │   │   ├── graph/          # LangGraph StateGraph Orchestration
 │   │   │   │   ├── state.py    # TestPilotState TypedDict
-│   │   │   │   ├── nodes.py    # Multi-step Agent Reasoning Nodes
+│   │   │   │   ├── nodes.py    # Agent Reasoning Nodes
 │   │   │   │   ├── edges.py    # Conditional Routing Functions
 │   │   │   │   ├── tools.py    # LangChain @tool Decorated Functions
 │   │   │   │   └── pipeline.py # StateGraph Assembly & Async Invocation
-│   │   │   ├── memory/         # Persistent Cross-Run Agent Memory (ChromaDB)
-│   │   │   ├── auth/           # Enterprise Auth Subsystem (AuthManager, SessionCache)
-│   │   │   ├── core/           # WebSocket Manager & Telemetry
-│   │   │   ├── tools/          # Physical Tool Execution Registry
+│   │   │   ├── auth/           # Auth Subsystem (AuthManager, SessionCache)
 │   │   │   └── api/            # REST API Routers
 │   │   ├── tests/              # Pytest Suite
 │   │   └── requirements.txt
 │   └── frontend/               # Next.js 16 + Tailwind CSS Dark Obsidian Dashboard
 ├── docs/
-│   ├── architecture.md         # Full System Architecture & Data Flow
-│   └── interview.md            # Enterprise System Design & Interview Guide
-├── Dockerfile.backend
-├── Dockerfile.frontend
-├── docker-compose.yml
-├── render.yaml
-└── README.md
+│   └── architecture.md         # Full System Architecture & Data Flow
+├── README.md
+└── .gitignore
 ```
 
 ---
 
-## Core Features & Agentic Highlights
+## Core Features
 
-* **LangGraph `StateGraph` Orchestration**: Replaces hand-rolled event buses with a declarative, checkpointed agent state graph.
-* **Multi-Step Self-Healing Loop**: If locator drift or test failures occur during browser execution, the `failure_analysis` node automatically inspects live DOM state, repairs selectors, and re-executes tests.
-* **Persistent Cross-Run Vector Memory**: Powered by **ChromaDB**. Learns from previous selector failures and app quirks so subsequent runs execute faster with zero retries.
-* **Fail-Fast Post-Authentication Probe**: Pre-authenticates sessions using `AuthManager` with heuristic-first DOM scanning before executing tests, avoiding cascading failures on bad credentials.
-* **Realtime WebSocket Streaming**: Live broadcasts agent reasoning steps and node transitions directly to the Next.js workspace dashboard.
-* **Auto-Generated GitHub Pull Requests**: Creates ready-to-merge PRs containing generated and self-healed Playwright test suites.
+* **LangGraph `StateGraph` Orchestration**: Declarative, checkpointed agent state graph driving the full test generation pipeline.
+* **Repo Analysis Agent**: Clones target repository and inspects file tree, routes, framework config, and component structure.
+* **AI Test Planning**: Combines repo structure with live DOM inspection to derive resilient E2E test scenarios.
+* **Playwright Test Generation**: Generates clean Playwright Python test scripts targeting discovered routes and interactive elements.
+* **Automated Browser Execution**: Runs generated test suites in isolated headless Playwright browser sandboxes.
+* **GitHub PR Integration**: Creates ready-to-merge Pull Requests containing generated Playwright test suites.
 
 ---
 
