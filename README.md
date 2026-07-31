@@ -15,10 +15,14 @@ flowchart TD
         GRAPH --> AUTH["1. auth_check_node"]
         AUTH -->|pass| REPO["2. repo_analysis_node"]
         AUTH -->|fail| ABORT["abort_node"]
-        REPO --> PLAN["3. test_planning_node"]
-        PLAN --> GEN["4. playwright_gen_node"]
-        GEN --> EXEC["5. browser_execution_node"]
-        EXEC --> PR["6. github_pr_node"]
+        REPO --> INSP["3. page_inspection_node"]
+        INSP --> CODE["4. code_analysis_node"]
+        CODE --> UND["5. app_understanding_node"]
+        UND --> SEG["6. feature_segregation_node"]
+        SEG --> PLAN["7. test_planning_node"]
+        PLAN --> GEN["8. playwright_gen_node"]
+        GEN --> EXEC["9. browser_execution_node"]
+        EXEC --> PR["10. github_pr_node"]
         PR --> DONE["END State"]
     end
 
@@ -45,6 +49,10 @@ testpilot-ai/
 │   │   │   │   ├── nodes.py    # Agent Reasoning Nodes
 │   │   │   │   ├── edges.py    # Conditional Routing Functions
 │   │   │   │   ├── tools.py    # LangChain @tool Decorated Functions
+│   │   │   │   ├── page_inspection_node.py # DOM elements visibility inspection
+│   │   │   │   ├── code_analysis_node.py   # Code static dependencies discovery
+│   │   │   │   ├── app_understanding_node.py # Inferred domain QA reasoning
+│   │   │   │   ├── feature_segregation_node.py # Client-side SPA tab grouper
 │   │   │   │   └── pipeline.py # StateGraph Assembly & Async Invocation
 │   │   │   ├── auth/           # Auth Subsystem (AuthManager, SessionCache)
 │   │   │   └── api/            # REST API Routers
@@ -54,19 +62,21 @@ testpilot-ai/
 ├── docs/
 │   └── architecture.md         # Full System Architecture & Data Flow
 ├── README.md
-└── .gitignore
+│   └── .gitignore
 ```
 
 ---
 
 ## Core Features
 
-* **LangGraph `StateGraph` Orchestration**: Declarative, checkpointed agent state graph driving the full test generation pipeline.
-* **Repo Analysis Agent**: Clones target repository and inspects file tree, routes, framework config, and component structure.
-* **AI Test Planning**: Combines repo structure with live DOM inspection to derive resilient E2E test scenarios.
-* **Playwright Test Generation**: Generates clean Playwright Python test scripts targeting discovered routes and interactive elements.
-* **Automated Browser Execution**: Runs generated test suites in isolated headless Playwright browser sandboxes.
-* **GitHub PR Integration**: Creates ready-to-merge Pull Requests containing generated Playwright test suites.
+* **LangGraph `StateGraph` Orchestration**: Checkpointed, stateful agent loop driving the automated test creation pipeline.
+* **Live Page Inspection**: Scans active website DOM trees to discover visible interactive items (buttons, links, text inputs) while skipping hidden layout artifacts.
+* **Code static analysis**: Checks frameworks, routing files, schema validation scripts (Zod/Yup), API requests, and custom state context logic.
+* **QA Reasoning Engine**: Performs cross-validation checks between live rendering elements and code patterns to build complete business behavior profiles.
+* **Client-Side SPA Tab Segregation**: Discovers non-path interactive views (tabs like Inventory, Employees, Reports, CRM) in SPA projects and maps them to feature test cases.
+* **Resilient Playwright Generation**: Produces clean spec assertions using target role-based / label-based selectors instead of fragile CSS selectors.
+* **Sandboxed Browser Execution**: Simulates live browser interactions and collects output execution console logs.
+* **GitHub PR Integration**: Submits a ready-to-review Pull Request on completion.
 
 ---
 
