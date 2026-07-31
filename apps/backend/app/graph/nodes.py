@@ -64,191 +64,84 @@ async def repo_analysis_node(state: TestPilotState) -> Dict[str, Any]:
 
 
 async def test_planning_node(state: TestPilotState) -> Dict[str, Any]:
-    """Agent: QA Engineer reasoning that creates feature-grouped test scenarios using cross-validation."""
+    """Agent: Converts feature-grouped test actions into structured test scenarios."""
     run_id = state["run_id"]
     website_url = state["website_url"]
-    inspections = state.get("page_inspections") or []
-    code_info = state.get("code_analysis") or {}
-    understanding = state.get("app_understanding") or {}
     features = state.get("features") or {}
 
-    logger.info(f"[Node: test_planning] Planning tests based on application understanding & features")
+    logger.info(f"[Node: test_planning] Planning tests from {len(features)} feature groups")
 
     plan = []
     idx = 1
 
-    # Loop through segregated features instead of routes
-    for feature_name, routes_list in features.items():
-        for r_info in routes_list:
-            route = r_info["route"]
-            page_type = r_info["page_type"]
+    for feature_name, route_entries in features.items():
+        for entry in route_entries:
+            route = entry.get("route", "/")
+            page_type = entry.get("page_type", "unknown")
+            test_actions = entry.get("test_actions", [])
             target_url = f"{website_url.rstrip('/')}{route}" if route != "/" else website_url
 
-            # Extract element context from corresponding page inspection
-            insp = next((i for i in inspections if i.get("route") == route), {})
-            buttons = insp.get("buttons") or []
-            inputs = insp.get("inputs") or []
-            
-            btn_names = [b.get("text") for b in buttons if b.get("text")]
-            input_labels = [i.get("label") or i.get("placeholder") or i.get("name") for i in inputs if i.get("label") or i.get("placeholder") or i.get("name")]
+            if not test_actions:
+                # Minimal navigation test if no actions defined
+                plan.append({
+                    "id": f"scenario-{idx}",
+                    "feature": feature_name,
+                    "name": f"{feature_name}: Load {route}",
+                    "description": f"Verifies page at {route} loads successfully.",
+                    "targetUrl": target_url,
+                    "steps": [
+                        {"action": "navigate", "value": target_url},
+                        {"action": "assert_visible", "locator_type": "role", "role": "heading", "name": feature_name}
+                    ]
+                })
+                idx += 1
+                continue
 
-            # Cross-Validation: Check if source code reveals validations or actions not in raw UI
-            validation_notes = code_info.get("validations", [])
-            auth_strat = code_info.get("authentication", [])
+            # Convert test_actions into plan steps
+            steps = [{"action": "navigate", "value": target_url}]
+            description_parts = []
 
-            # Generate smart, functional test steps
-            if feature_name == "Authentication":
-                email_label = next((l for l in input_labels if "email" in l.lower()), "Email")
-                btn_name = next((b for b in btn_names if "log" in b.lower() or "sign" in b.lower()), "Log In")
-                
-                # Cross-validation warning logs
-                logger.info(f"[Test Planning] Cross-validating Authentication page. Code expects strategy: {auth_strat}")
-                
-                plan.append({
-                    "id": f"scenario-{idx}",
-                    "feature": feature_name,
-                    "name": "Auth: Invalid User Signin Validation",
-                    "description": "Verifies that invalid credentials inputs trigger validation rules.",
-                    "targetUrl": target_url,
-                    "steps": [
-                        {"action": "navigate", "value": target_url},
-                        {"action": "fill", "label": email_label, "value": "invalid_email_format"},
-                        {"action": "click", "role": "button", "name": btn_name},
-                        {"action": "assert_visible", "locator_type": "text", "text": "invalid"}
-                    ]
-                })
-            elif feature_name == "Contact Form Dispatch":
-                email_label = next((l for l in input_labels if "email" in l.lower()), "Email")
-                msg_label = next((l for l in input_labels if "msg" in l.lower() or "message" in l.lower()), "Message")
-                btn_name = next((b for b in btn_names if "submit" in b.lower() or "send" in b.lower()), "Submit")
-                
-                logger.info(f"[Test Planning] Cross-validating Contact Form. Form validations discovered: {validation_notes}")
+            for ta in test_actions:
+                action = ta.get("action", "assert_visible")
+                element_type = ta.get("element_type", "text")
+                identifier = ta.get("element_identifier", "")
+                desc = ta.get("description", "")
 
-                plan.append({
-                    "id": f"scenario-{idx}",
-                    "feature": feature_name,
-                    "name": "Contact: Form Submit Feedbacks",
-                    "description": "Fills email and message inputs and triggers send dispatch.",
-                    "targetUrl": target_url,
-                    "steps": [
-                        {"action": "navigate", "value": target_url},
-                        {"action": "fill", "label": email_label, "value": "qa@testpilot.ai"},
-                        {"action": "fill", "label": msg_label, "value": "Testing contact field validation submission"},
-                        {"action": "click", "role": "button", "name": btn_name}
-                    ]
-                })
-            elif feature_name == "Dashboard Metrics":
-                plan.append({
-                    "id": f"scenario-{idx}",
-                    "feature": feature_name,
-                    "name": "Dashboard: Metrics Summary Widgets",
-                    "description": "Verifies rendering of key stats and summary layout cards.",
-                    "targetUrl": target_url,
-                    "steps": [
-                        {"action": "navigate", "value": target_url},
-                        {"action": "assert_visible", "locator_type": "role", "role": "heading", "name": "Dashboard"},
-                        {"action": "assert_visible", "locator_type": "text", "text": "Total"}
-                    ]
-                })
-            elif feature_name == "Catalog Listing":
-                btn_name = next((b for b in btn_names if "cart" in b.lower() or "buy" in b.lower()), "Add to Cart")
-                plan.append({
-                    "id": f"scenario-{idx}",
-                    "feature": feature_name,
-                    "name": "Products: List Grid Catalog Add Cart",
-                    "description": "Verify product cards display and cart addition executes.",
-                    "targetUrl": target_url,
-                    "steps": [
-                        {"action": "navigate", "value": target_url},
-                        {"action": "assert_visible", "locator_type": "text", "text": "Products"},
-                        {"action": "click", "role": "button", "name": btn_name}
-                    ]
-                })
-            elif feature_name == "Account Settings":
-                btn_name = next((b for b in btn_names if "save" in b.lower() or "update" in b.lower()), "Save Settings")
-                plan.append({
-                    "id": f"scenario-{idx}",
-                    "feature": feature_name,
-                    "name": "Settings: Configure Preferences Updates",
-                    "description": "Updates settings checkboxes and saves settings.",
-                    "targetUrl": target_url,
-                    "steps": [
-                        {"action": "navigate", "value": target_url},
-                        {"action": "click", "role": "button", "name": btn_name}
-                    ]
-                })
-            elif feature_name == "Inventory Management":
-                plan.append({
-                    "id": f"scenario-{idx}",
-                    "feature": feature_name,
-                    "name": "Inventory: Stock Catalog Listing",
-                    "description": "Verifies that navigating to the Inventory view loads stock item details.",
-                    "targetUrl": target_url,
-                    "steps": [
-                        {"action": "navigate", "value": target_url},
-                        {"action": "click", "role": "button", "name": "Inventory"},
-                        {"action": "assert_visible", "locator_type": "text", "text": "Stock"}
-                    ]
-                })
-            elif feature_name == "Employee Management":
-                plan.append({
-                    "id": f"scenario-{idx}",
-                    "feature": feature_name,
-                    "name": "Employees: Staff Directory Profiles",
-                    "description": "Verifies that navigating to the Employees tab renders staff cards.",
-                    "targetUrl": target_url,
-                    "steps": [
-                        {"action": "navigate", "value": target_url},
-                        {"action": "click", "role": "button", "name": "Employees"},
-                        {"action": "assert_visible", "locator_type": "text", "text": "Staff"}
-                    ]
-                })
-            elif feature_name == "Reporting Analytics":
-                plan.append({
-                    "id": f"scenario-{idx}",
-                    "feature": feature_name,
-                    "name": "Reporting: Sales Metrics Charts",
-                    "description": "Verifies that clicking the Reports tab displays sales analysis analytics.",
-                    "targetUrl": target_url,
-                    "steps": [
-                        {"action": "navigate", "value": target_url},
-                        {"action": "click", "role": "button", "name": "Reports"},
-                        {"action": "assert_visible", "locator_type": "text", "text": "Sales"}
-                    ]
-                })
-            elif feature_name == "Customer CRM Manager":
-                plan.append({
-                    "id": f"scenario-{idx}",
-                    "feature": feature_name,
-                    "name": "CRM: Customer Database Directory",
-                    "description": "Verifies that clicking CRM lists registered client entries.",
-                    "targetUrl": target_url,
-                    "steps": [
-                        {"action": "navigate", "value": target_url},
-                        {"action": "click", "role": "button", "name": "CRM"},
-                        {"action": "assert_visible", "locator_type": "text", "text": "Customers"}
-                    ]
-                })
-            else:
-                title = insp.get("title", "Route Page")
-                plan.append({
-                    "id": f"scenario-{idx}",
-                    "feature": feature_name,
-                    "name": f"Navigation: Load {route}",
-                    "description": f"Verifies page navigation resolves for {route}.",
-                    "targetUrl": target_url,
-                    "steps": [
-                        {"action": "navigate", "value": target_url},
-                        {"action": "assert_visible", "locator_type": "role", "role": "heading", "name": title}
-                    ]
-                })
+                if desc:
+                    description_parts.append(desc)
+
+                if action == "navigate":
+                    # Already added at the top
+                    continue
+                elif action == "click":
+                    role = "button" if element_type == "button" else "link" if element_type == "link" else "button"
+                    steps.append({"action": "click", "role": role, "name": identifier})
+                elif action == "fill":
+                    steps.append({"action": "fill", "label": identifier, "value": "test@testpilot.ai"})
+                elif action in ("assert_visible", "assert_text"):
+                    if element_type == "heading":
+                        steps.append({"action": "assert_visible", "locator_type": "role", "role": "heading", "name": identifier})
+                    else:
+                        steps.append({"action": "assert_visible", "locator_type": "text", "text": identifier})
+
+            scenario_name = f"{feature_name}: {description_parts[0]}" if description_parts else f"{feature_name}: Verify {route}"
+
+            plan.append({
+                "id": f"scenario-{idx}",
+                "feature": feature_name,
+                "name": scenario_name[:80],
+                "description": "; ".join(description_parts[:3]) if description_parts else f"Verifies {feature_name} on {route}.",
+                "targetUrl": target_url,
+                "steps": steps
+            })
             idx += 1
 
     return {
         "test_plan": plan,
         "status": "generating",
-        "messages": [{"role": "assistant", "content": f"QA Planner designed {len(plan)} business-critical test cases."}]
+        "messages": [{"role": "assistant", "content": f"QA Planner designed {len(plan)} test scenarios from {len(features)} features."}]
     }
+
 
 
 async def playwright_gen_node(state: TestPilotState) -> Dict[str, Any]:
