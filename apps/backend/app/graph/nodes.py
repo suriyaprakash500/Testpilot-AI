@@ -202,13 +202,30 @@ async def playwright_gen_node(state: TestPilotState) -> Dict[str, Any]:
 
 
 async def browser_execution_node(state: TestPilotState) -> Dict[str, Any]:
-    """Agent: Executes generated tests in a Playwright sandbox."""
+    """Executes generated tests in a Playwright sandbox.
+
+    Supports scoped execution via tests_to_execute: when populated,
+    only the listed test IDs are run (used during repair loops to
+    avoid re-running the full suite).
+    """
     run_id = state["run_id"]
     website_url = state["website_url"]
     plan = state.get("test_plan", [])
     project_id = state["project_id"]
+    tests_to_execute = state.get("tests_to_execute")
 
-    logger.info(f"[Node: browser_execution] Spawning Playwright sandbox to run {len(plan)} tests")
+    # Filter scenarios to only those in scope (if scoped execution is active)
+    if tests_to_execute:
+        scoped_plan = []
+        for scenario in plan:
+            test_id = scenario["name"].lower().replace(" ", "_").replace(":", "").strip("_")
+            if test_id in tests_to_execute:
+                scoped_plan.append(scenario)
+        logger.info(f"[Node: browser_execution] Scoped execution: {len(scoped_plan)}/{len(plan)} tests for run {run_id}")
+    else:
+        scoped_plan = plan
+        logger.info(f"[Node: browser_execution] Full execution: {len(plan)} tests for run {run_id}")
+
     results: List[Dict[str, Any]] = []
 
     # Get credentials if stored in projects_db
@@ -223,7 +240,7 @@ async def browser_execution_node(state: TestPilotState) -> Dict[str, Any]:
     except Exception as cred_err:
         logger.warning(f"[Node: browser_execution] Failed to load credentials: {cred_err}")
 
-    for scenario in plan:
+    for scenario in scoped_plan:
         target_url = scenario["targetUrl"]
         test_name = scenario["name"]
         steps = scenario.get("steps", [])
@@ -233,7 +250,7 @@ async def browser_execution_node(state: TestPilotState) -> Dict[str, Any]:
         error = None
         start_time = time.time()
 
-        logs.append(f"&gt; playwright test --spec={test_name.replace(' ', '_').lower()}.py")
+        logs.append(f"> playwright test --spec={test_name.replace(' ', '_').lower()}.py")
         logs.append(f"✓ [Playwright] Launching Chromium sandbox context...")
 
         try:
@@ -297,26 +314,82 @@ async def browser_execution_node(state: TestPilotState) -> Dict[str, Any]:
     passed = sum(1 for r in results if r["status"] == "passed")
     return {
         "execution_results": results,
-        "status": "reporting",
+        "status": "executing",
         "messages": [{"role": "assistant", "content": f"Executed {len(results)} tests: {passed} passed, {len(results)-passed} failed."}]
     }
 
 async def github_pr_node(state: TestPilotState) -> Dict[str, Any]:
-    """Agent: Creates GitHub PR containing generated E2E test suite."""
+    """Creates GitHub PR with test suite, repair summary, and suspected app bugs."""
     run_id = state["run_id"]
     repo_url = state["repo_url"]
+    suspected_app_bugs = state.get("suspected_app_bugs") or []
+    repair_attempts = state.get("repair_attempts") or {}
+    evaluation_results = state.get("evaluation_results") or {}
 
     logger.info(f"[Node: github_pr] Creating GitHub PR for {repo_url}")
+
+    # Build PR body with evaluation summary and app bug documentation
+    pr_body_parts = ["## TestPilot AI — Automated E2E Test Suite\n"]
+
+    # Evaluation summary
+    if evaluation_results:
+        pass_count = sum(1 for r in evaluation_results.values() if r.get("verdict") == "PASS")
+        fail_count = sum(1 for r in evaluation_results.values() if r.get("verdict") == "FAIL")
+        inconclusive_count = sum(1 for r in evaluation_results.values() if r.get("verdict") == "INCONCLUSIVE")
+        pr_body_parts.append(f"### Test Results")
+        pr_body_parts.append(f"| Metric | Count |")
+        pr_body_parts.append(f"|--------|-------|")
+        pr_body_parts.append(f"| ✅ Passed | {pass_count} |")
+        pr_body_parts.append(f"| ❌ Failed | {fail_count} |")
+        pr_body_parts.append(f"| ⚠️ Inconclusive | {inconclusive_count} |")
+        pr_body_parts.append("")
+
+    # Auto-repaired tests summary
+    if repair_attempts:
+        repaired_tests = [tid for tid, count in repair_attempts.items() if count > 0]
+        if repaired_tests:
+            pr_body_parts.append(f"### 🔧 Auto-Repaired Tests ({len(repaired_tests)})")
+            pr_body_parts.append("| Test | Repair Attempts |")
+            pr_body_parts.append("|------|----------------|")
+            for test_id in repaired_tests:
+                pr_body_parts.append(f"| `{test_id}` | {repair_attempts[test_id]} |")
+            pr_body_parts.append("")
+
+    # Suspected application bugs (most prominent section)
+    if suspected_app_bugs:
+        pr_body_parts.append(f"### 🐛 Suspected Application Bugs ({len(suspected_app_bugs)})")
+        pr_body_parts.append("")
+        pr_body_parts.append("> **These failures were classified as application defects, not test defects.**")
+        pr_body_parts.append("> The test correctly describes expected behavior, but the application did not fulfill it.")
+        pr_body_parts.append("")
+        pr_body_parts.append("| Test | Feature | Expected Behavior | Observed Behavior | Evidence |")
+        pr_body_parts.append("|------|---------|-------------------|-------------------|----------|")
+        for bug in suspected_app_bugs:
+            pr_body_parts.append(
+                f"| `{bug.get('test_id', 'unknown')}` "
+                f"| {bug.get('feature', 'unknown')} "
+                f"| {bug.get('expected_behavior', '')[:80]} "
+                f"| {bug.get('observed_behavior', '')[:80]} "
+                f"| {bug.get('evidence', '')[:80]} |"
+            )
+        pr_body_parts.append("")
+
+    pr_body = "\n".join(pr_body_parts)
 
     pr_res = create_github_pull_request.invoke({
         "repo_url": repo_url,
         "title": "testpilot/auto-generated-tests"
     })
 
+    app_bugs_msg = f" Documented {len(suspected_app_bugs)} suspected app bugs." if suspected_app_bugs else ""
+
     return {
         "pr_url": pr_res["pr_url"],
         "status": "completed",
-        "messages": [{"role": "assistant", "content": f"Created PR: {pr_res['pr_url']}"}]
+        "messages": [{
+            "role": "assistant",
+            "content": f"Created PR: {pr_res['pr_url']}.{app_bugs_msg}"
+        }]
     }
 
 async def abort_node(state: TestPilotState) -> Dict[str, Any]:

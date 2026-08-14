@@ -5,6 +5,32 @@ from playwright.async_api import async_playwright
 
 logger = logging.getLogger("graph-page-inspection")
 
+
+def _format_accessibility_tree(node: Dict[str, Any], depth: int = 0) -> str:
+    """Converts Playwright AOM snapshot into a flat indented text format.
+
+    Produces a semantic, simplified view of the page suitable for LLM
+    consumption, limiting the model's ability to hallucinate invalid selectors.
+    """
+    indent = "  " * depth
+    role = node.get("role", "")
+    name = node.get("name", "")
+    value = node.get("value", "")
+
+    parts = [role]
+    if name:
+        parts.append(f'"{name}"')
+    if value:
+        parts.append(f'value="{value}"')
+
+    line = f"{indent}{' '.join(parts)}"
+    lines = [line]
+
+    for child in node.get("children", []):
+        lines.append(_format_accessibility_tree(child, depth + 1))
+
+    return "\n".join(lines)
+
 def classify_page_type(route: str, metadata: Dict[str, Any]) -> str:
     """Classifies a page type based on route and extracted metadata."""
     route_lower = route.lower()
@@ -189,6 +215,17 @@ async def page_inspection_node(state: TestPilotState) -> Dict[str, Any]:
                     # Classify page type
                     page_type = classify_page_type(route, dom_data)
 
+                    # Extract Accessibility Tree (AOM) for semantic page structure.
+                    # Used by test_repair_node instead of raw HTML to reduce
+                    # hallucinated selectors during LLM-powered repairs.
+                    accessibility_tree = ""
+                    try:
+                        aom_snapshot = await page.accessibility.snapshot()
+                        if aom_snapshot:
+                            accessibility_tree = _format_accessibility_tree(aom_snapshot)
+                    except Exception as aom_err:
+                        logger.warning(f"[Node: page_inspection] AOM extraction failed for {route}: {aom_err}")
+
                     # Check if auth required (redirected to login or page has password fields and route is not login)
                     current_url = page.url
                     auth_required = False
@@ -207,7 +244,8 @@ async def page_inspection_node(state: TestPilotState) -> Dict[str, Any]:
                         "links": dom_data.get("links", []),
                         "interactive_elements": dom_data.get("interactive_elements", []),
                         "inputs": dom_data.get("inputs", []),
-                        "authentication_required": auth_required
+                        "authentication_required": auth_required,
+                        "accessibility_tree": accessibility_tree,
                     })
 
                     logger.info(f"[Node: page_inspection] Discovered page type '{page_type}' for route '{route}'")
@@ -234,7 +272,8 @@ async def page_inspection_node(state: TestPilotState) -> Dict[str, Any]:
                 "links": [],
                 "interactive_elements": [],
                 "inputs": [],
-                "authentication_required": False
+                "authentication_required": False,
+                "accessibility_tree": "",
             })
 
     return {

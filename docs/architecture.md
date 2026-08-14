@@ -17,11 +17,19 @@ testpilot-ai/
 │   │   │   ├── config.py       # pydantic-settings Configuration
 │   │   │   ├── models.py       # Pydantic v2 Domain Schemas & Contracts
 │   │   │   ├── graph/          # LangGraph StateGraph Agent Engine
-│   │   │   │   ├── state.py    # TestPilotState TypedDict
-│   │   │   │   ├── nodes.py    # Agent Reasoning Nodes
+│   │   │   │   ├── state.py    # TestPilotState TypedDict + merge reducers
+│   │   │   │   ├── nodes.py    # Core Agent Nodes (auth, repo, exec, PR)
 │   │   │   │   ├── edges.py    # Conditional Routing Functions
 │   │   │   │   ├── tools.py    # LangChain @tool Functions
-│   │   │   │   └── pipeline.py # StateGraph Assembly & Async Executor
+│   │   │   │   ├── pipeline.py # StateGraph Assembly & Async Executor
+│   │   │   │   ├── page_inspection_node.py    # Playwright DOM + AOM extraction
+│   │   │   │   ├── code_analysis_node.py      # Static code analysis
+│   │   │   │   ├── app_understanding_node.py  # LLM app comprehension
+│   │   │   │   ├── feature_segregation_node.py # LLM feature mapping
+│   │   │   │   ├── test_evaluation_node.py    # Deterministic test evaluation
+│   │   │   │   ├── failure_analysis_node.py   # LLM root cause classification
+│   │   │   │   ├── test_repair_node.py        # LLM test repair
+│   │   │   │   └── inconclusive_retry_node.py # Deterministic env flake retry
 │   │   │   ├── auth/           # Authentication Subsystem
 │   │   │   └── api/            # REST API Routers
 │   │   ├── tests/              # Pytest Test Suites
@@ -33,7 +41,7 @@ testpilot-ai/
 
 ## 2. Agent Pipeline — LangGraph `StateGraph`
 
-The pipeline is modeled as a **LangGraph `StateGraph`**. Shared state (`TestPilotState`) flows through nodes sequentially, with a conditional edge managing fail-fast branching after auth.
+The pipeline is modeled as a **LangGraph `StateGraph`** with feedback loops. Shared state (`TestPilotState`) flows through nodes, with conditional edges managing branching after auth and cyclical routing through the evaluation-repair loop.
 
 ```mermaid
 flowchart TD
@@ -41,13 +49,32 @@ flowchart TD
     API --> GRAPH["LangGraph StateGraph Orchestrator"]
 
     subgraph Pipeline["LangGraph Agent Pipeline"]
-        GRAPH --> AUTH["1. auth_check_node"]
-        AUTH -->|pass| REPO["2. repo_analysis_node"]
-        AUTH -->|fail| ABORT["abort_node"]
-        REPO --> PLAN["3. test_planning_node"]
-        PLAN --> GEN["4. playwright_gen_node"]
-        GEN --> EXEC["5. browser_execution_node"]
-        EXEC --> PR["6. github_pr_node"]
+        direction TB
+        subgraph Linear["Linear Generation Path"]
+            GRAPH --> AUTH["1. auth_check_node"]
+            AUTH -->|pass| REPO["2. repo_analysis_node"]
+            AUTH -->|fail| ABORT["abort_node"]
+            REPO --> INSP["3. page_inspection_node"]
+            INSP --> CODE["4. code_analysis_node"]
+            CODE --> UNDER["5. app_understanding_node"]
+            UNDER --> SEG["6. feature_segregation_node"]
+            SEG --> PLAN["7. test_planning_node"]
+            PLAN --> GEN["8. playwright_gen_node"]
+        end
+
+        subgraph Feedback["Feedback Loop (Evaluation → Repair)"]
+            GEN --> EXEC["9. browser_execution_node"]
+            EXEC --> EVAL["10. test_evaluation_node"]
+            EVAL -->|ALL PASS| PR["13. github_pr_node"]
+            EVAL -->|HAS FAILURES| FAIL_A["11. failure_analysis_node"]
+            EVAL -->|INCONCLUSIVE| INCONC["12. inconclusive_retry_node"]
+            FAIL_A -->|repairable + retries left| REPAIR["11b. test_repair_node"]
+            FAIL_A -->|app bug / max retries| PR
+            REPAIR --> EXEC
+            INCONC -->|retries left| EXEC
+            INCONC -->|retries exhausted| PR
+        end
+
         PR --> DONE["END State"]
     end
 
@@ -57,15 +84,33 @@ flowchart TD
     end
 ```
 
-### Agent Node Roles
+### Node Classification (Deterministic vs. LLM)
 
-1. **`auth_check_node`**: Pre-authenticates sessions using `AuthManager` with fail-fast verification before test execution begins.
-2. **`repo_analysis_node`**: Analyzes repository structure, routes, entry points, and framework configuration.
-3. **`test_planning_node`**: Combines repo structure and live DOM interactive element scans to plan E2E scenarios.
-4. **`playwright_gen_node`**: Generates clean Playwright Python test scripts.
-5. **`browser_execution_node`**: Executes test suites using `playwright.async_api` in isolated browser sandboxes.
-6. **`github_pr_node`**: Opens GitHub Pull Requests containing generated test suites.
-7. **`abort_node`**: Handles fail-fast terminations with clear error messages.
+| Node | Type | Role |
+|------|------|------|
+| `auth_check_node` | Deterministic | Pre-authenticates sessions with fail-fast verification |
+| `repo_analysis_node` | Deterministic | Clones repo, parses routes, framework config |
+| `page_inspection_node` | Deterministic (Playwright) | Extracts DOM elements + Accessibility Tree |
+| `code_analysis_node` | Deterministic (static) | Scans source for auth, validation, API patterns |
+| `app_understanding_node` | **LLM** | Reasons about app purpose and testable features |
+| `feature_segregation_node` | **LLM** | Maps features to routes with concrete actions |
+| `test_planning_node` | **LLM** | Converts features into structured test scenarios |
+| `playwright_gen_node` | **LLM** | Generates Playwright Python test scripts |
+| `browser_execution_node` | Deterministic | Executes tests in isolated browser sandbox |
+| `test_evaluation_node` | Deterministic + LLM fallback | Classifies results as PASS/FAIL/INCONCLUSIVE |
+| `failure_analysis_node` | **LLM** | Root cause: test defect vs. application bug |
+| `test_repair_node` | **LLM** | Repairs broken test code with bounded retries |
+| `inconclusive_retry_node` | Deterministic | Re-executes env-flaky tests without LLM |
+| `github_pr_node` | Deterministic | Opens PRs with test suite + bug documentation |
+| `abort_node` | Deterministic | Handles fail-fast terminations |
+
+### Key Design Decisions
+
+- **Custom merge reducers**: Per-test state fields use `Annotated[Dict, merge_dicts]` to prevent LangGraph's last-write-wins from destroying data during repair loops.
+- **Scoped re-execution**: `tests_to_execute` limits which tests run during repair cycles, avoiding full-suite reruns.
+- **Bounded repair loops**: `MAX_REPAIR_ATTEMPTS = 3` per test prevents unbounded LLM retry loops.
+- **Recursion limit**: Graph runs with `recursion_limit=150` to accommodate nested repair cycles.
+- **Frontend backward compatibility**: All feedback loop nodes map to `"executing"` status for the frontend polling contract.
 
 ---
 

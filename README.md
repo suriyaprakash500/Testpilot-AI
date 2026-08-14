@@ -1,6 +1,6 @@
 # TestPilot AI
 
-> Autonomous, AI-native QA engineering platform powered by a **Python FastAPI + LangGraph StateGraph Agentic Engine** and a **React Dashboard**.
+> Autonomous, AI-native QA engineering platform powered by a **Python FastAPI + LangGraph StateGraph Agentic Engine** with **feedback-loop test repair** and a **React Dashboard**.
 
 ---
 
@@ -12,17 +12,32 @@ flowchart TD
     API --> GRAPH["LangGraph StateGraph Orchestrator"]
 
     subgraph Pipeline["LangGraph Agent Pipeline"]
-        GRAPH --> AUTH["1. auth_check_node"]
-        AUTH -->|pass| REPO["2. repo_analysis_node"]
-        AUTH -->|fail| ABORT["abort_node"]
-        REPO --> INSP["3. page_inspection_node"]
-        INSP --> CODE["4. code_analysis_node"]
-        CODE --> UND["5. app_understanding_node"]
-        UND --> SEG["6. feature_segregation_node"]
-        SEG --> PLAN["7. test_planning_node"]
-        PLAN --> GEN["8. playwright_gen_node"]
-        GEN --> EXEC["9. browser_execution_node"]
-        EXEC --> PR["10. github_pr_node"]
+        direction TB
+        subgraph Linear["Linear Generation Path"]
+            GRAPH --> AUTH["1. auth_check_node"]
+            AUTH -->|pass| REPO["2. repo_analysis_node"]
+            AUTH -->|fail| ABORT["abort_node"]
+            REPO --> INSP["3. page_inspection_node"]
+            INSP --> CODE["4. code_analysis_node"]
+            CODE --> UND["5. app_understanding_node"]
+            UND --> SEG["6. feature_segregation_node"]
+            SEG --> PLAN["7. test_planning_node"]
+            PLAN --> GEN["8. playwright_gen_node"]
+        end
+
+        subgraph Feedback["Feedback Loop"]
+            GEN --> EXEC["9. browser_execution_node"]
+            EXEC --> EVAL["10. test_evaluation_node"]
+            EVAL -->|ALL PASS| PR["13. github_pr_node"]
+            EVAL -->|HAS FAILURES| FAIL_A["11. failure_analysis_node"]
+            EVAL -->|INCONCLUSIVE| INCONC["12. inconclusive_retry_node"]
+            FAIL_A -->|repairable| REPAIR["11b. test_repair_node"]
+            FAIL_A -->|app bug / max retries| PR
+            REPAIR --> EXEC
+            INCONC -->|retries left| EXEC
+            INCONC -->|retries exhausted| PR
+        end
+
         PR --> DONE["END State"]
     end
 
@@ -45,15 +60,19 @@ testpilot-ai/
 │   │   │   ├── config.py       # pydantic-settings Environment Management
 │   │   │   ├── models.py       # Pydantic v2 Domain Data Contracts
 │   │   │   ├── graph/          # LangGraph StateGraph Orchestration
-│   │   │   │   ├── state.py    # TestPilotState TypedDict
-│   │   │   │   ├── nodes.py    # Agent Reasoning Nodes
+│   │   │   │   ├── state.py    # TestPilotState TypedDict + merge reducers
+│   │   │   │   ├── nodes.py    # Core Agent Nodes (auth, repo, exec, PR)
 │   │   │   │   ├── edges.py    # Conditional Routing Functions
 │   │   │   │   ├── tools.py    # LangChain @tool Decorated Functions
-│   │   │   │   ├── page_inspection_node.py # DOM elements visibility inspection
-│   │   │   │   ├── code_analysis_node.py   # Code static dependencies discovery
-│   │   │   │   ├── app_understanding_node.py # Inferred domain QA reasoning
-│   │   │   │   ├── feature_segregation_node.py # Client-side SPA tab grouper
-│   │   │   │   └── pipeline.py # StateGraph Assembly & Async Invocation
+│   │   │   │   ├── pipeline.py # StateGraph Assembly & Async Invocation
+│   │   │   │   ├── page_inspection_node.py    # DOM + Accessibility Tree extraction
+│   │   │   │   ├── code_analysis_node.py      # Static code analysis
+│   │   │   │   ├── app_understanding_node.py  # LLM domain reasoning
+│   │   │   │   ├── feature_segregation_node.py # SPA feature grouping
+│   │   │   │   ├── test_evaluation_node.py    # Deterministic test evaluation
+│   │   │   │   ├── failure_analysis_node.py   # LLM root cause classification
+│   │   │   │   ├── test_repair_node.py        # LLM test repair (max 3 attempts)
+│   │   │   │   └── inconclusive_retry_node.py # Deterministic env flake retry
 │   │   │   ├── auth/           # Auth Subsystem (AuthManager, SessionCache)
 │   │   │   └── api/            # REST API Routers
 │   │   ├── tests/              # Pytest Suite
@@ -69,14 +88,18 @@ testpilot-ai/
 
 ## Core Features
 
-* **LangGraph `StateGraph` Orchestration**: Checkpointed, stateful agent loop driving the automated test creation pipeline.
-* **Live Page Inspection**: Scans active website DOM trees to discover visible interactive items (buttons, links, text inputs) while skipping hidden layout artifacts.
-* **Code static analysis**: Checks frameworks, routing files, schema validation scripts (Zod/Yup), API requests, and custom state context logic.
-* **QA Reasoning Engine**: Performs cross-validation checks between live rendering elements and code patterns to build complete business behavior profiles.
-* **Client-Side SPA Tab Segregation**: Discovers non-path interactive views (tabs like Inventory, Employees, Reports, CRM) in SPA projects and maps them to feature test cases.
-* **Resilient Playwright Generation**: Produces clean spec assertions using target role-based / label-based selectors instead of fragile CSS selectors.
-* **Sandboxed Browser Execution**: Simulates live browser interactions and collects output execution console logs.
-* **GitHub PR Integration**: Submits a ready-to-review Pull Request on completion.
+* **LangGraph `StateGraph` Orchestration**: Checkpointed, stateful agent pipeline with feedback loops for test repair and retry.
+* **Feedback-Loop Test Repair**: Failed tests are evaluated, classified by root cause (selector wrong, timing issue, test assumption wrong, or application bug), and automatically repaired up to 3 times.
+* **Application Bug Detection**: Tests classified as application bugs are documented in the PR body with evidence — the system never weakens assertions to mask real defects.
+* **Deterministic Environment Retry**: Inconclusive tests (DNS, timeout, service down) are retried without LLM invocation, saving tokens and eliminating hallucination.
+* **Custom Merge Reducers**: Per-test state fields use `Annotated` types with `merge_dicts` reducers to prevent LangGraph's last-write-wins from corrupting data during repair loops.
+* **Scoped Re-execution**: During repair cycles, only repaired tests are re-run — passing tests are preserved via the merge reducer.
+* **Live Page Inspection**: Scans active website DOM trees and extracts the Playwright Accessibility Tree (AOM) for semantic element discovery.
+* **Code Static Analysis**: Analyzes frameworks, routing files, schema validation, API requests, and state management patterns.
+* **QA Reasoning Engine**: Cross-validates live DOM elements against code patterns to build business behavior profiles.
+* **Resilient Playwright Generation**: Produces clean assertions using role-based / label-based selectors instead of fragile CSS selectors.
+* **Sandboxed Browser Execution**: Runs tests in isolated Chromium contexts with full log capture.
+* **GitHub PR Integration**: Submits PRs with test results summary, auto-repair report, and suspected application bug documentation.
 
 ---
 
