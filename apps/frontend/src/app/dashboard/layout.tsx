@@ -1,13 +1,9 @@
 "use client";
 
+import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { 
   LayoutDashboard, 
-  Bot, 
-  GitBranch, 
-  FolderGit, 
-  Tv, 
-  Terminal, 
   BarChart3, 
   Settings, 
   Search, 
@@ -15,14 +11,20 @@ import {
   ChevronDown
 } from "lucide-react";
 
+interface NavItem {
+  label: string;
+  href: string;
+  icon: typeof LayoutDashboard;
+}
+
+const NAV_ITEMS: NavItem[] = [
+  { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
+  { label: "Reports", href: "/dashboard/analytics", icon: BarChart3 },
+  { label: "Settings", href: "/dashboard/settings", icon: Settings },
+];
+
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-
-  const navItems = [
-    { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
-    { label: "Reports", href: "/dashboard/analytics", icon: BarChart3 },
-    { label: "Settings", href: "/dashboard/settings", icon: Settings },
-  ];
 
   return (
     <div className="min-h-screen flex relative overflow-hidden" style={{ background: "var(--bg-primary)" }}>
@@ -61,11 +63,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           <div className="text-[10px] uppercase font-bold tracking-wider px-3 mb-2" style={{ color: "var(--text-muted)" }}>
             IDE Navigation
           </div>
-          {navItems.map((item) => {
+          {NAV_ITEMS.map((item) => {
             const Icon = item.icon;
             const isActive = pathname === item.href;
             return (
-              <a
+              <Link
                 key={item.href}
                 href={item.href}
                 className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-all duration-200 ${
@@ -74,12 +76,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               >
                 <Icon size={16} />
                 {item.label}
-              </a>
+              </Link>
             );
           })}
         </nav>
 
-        {/* User Profile */}
+        {/* User Profile Footer */}
         <div className="p-3 border-t" style={{ borderColor: "var(--border)" }}>
           <div className="flex items-center gap-3 px-3 py-2">
             <div
@@ -107,7 +109,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           className="h-14 flex-shrink-0 flex items-center justify-between px-6 border-b z-10"
           style={{ background: "rgba(7, 11, 20, 0.7)", backdropFilter: "blur(12px)", borderColor: "var(--border)" }}
         >
-          {/* Global Search command palette bar */}
+          {/* Global Search Command Palette Bar */}
           <div className="flex items-center gap-3 w-80 relative">
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: "var(--text-muted)" }} />
             <input
@@ -124,17 +126,20 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             />
           </div>
 
-          {/* Nav Actions */}
+          {/* Header Action Buttons */}
           <div className="flex items-center gap-4">
-            {/* Notification Bell */}
-            <button className="p-1.5 rounded-md border transition-all hover:bg-zinc-950 relative" style={{ borderColor: "var(--border)", color: "var(--text-secondary)" }}>
+            <button 
+              className="p-1.5 rounded-md border transition-all hover:bg-zinc-950 relative cursor-pointer" 
+              style={{ borderColor: "var(--border)", color: "var(--text-secondary)" }}
+              title="Notifications"
+            >
               <Bell size={14} />
               <span className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-rose-500 pulse-dot" />
             </button>
           </div>
         </header>
 
-        {/* Children content page */}
+        {/* Child Pages */}
         <main className="flex-1 overflow-y-auto">
           {children}
         </main>

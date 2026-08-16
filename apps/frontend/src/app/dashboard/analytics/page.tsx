@@ -1,43 +1,67 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { TrendingUp, CheckCircle, AlertCircle, RefreshCw, BarChart2, ShieldAlert } from "lucide-react";
-import { api, type AnalyticsData } from "../../../lib/api";
+import { api, getErrorMessage, type AnalyticsData } from "../../../lib/api";
+
+function formatTimeSaved(milliseconds: number): string {
+  if (!milliseconds || milliseconds <= 0) return "0h";
+  const hours = milliseconds / 3600000;
+  if (hours >= 0.1) {
+    return `${hours.toFixed(1)}h`;
+  }
+  const minutes = milliseconds / 60000;
+  if (minutes >= 0.1) {
+    return `${minutes.toFixed(1)}m`;
+  }
+  return `${(milliseconds / 1000).toFixed(0)}s`;
+}
 
 export default function AnalyticsPage() {
   const [data, setData] = useState<AnalyticsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const fetchAnalytics = async () => {
+  const fetchAnalytics = useCallback(async () => {
     try {
       setLoading(true);
-      const res = await api.getAnalytics();
-      setData(res);
+      const analyticsData = await api.getAnalytics();
+      setData(analyticsData);
       setError(null);
-    } catch (err: any) {
-      setError(err.message || "Failed to load analytics");
+    } catch (err: unknown) {
+      setError(getErrorMessage(err, "Failed to load analytics."));
     } finally {
       setLoading(false);
     }
-  };
-
-  useEffect(() => {
-    fetchAnalytics();
   }, []);
 
-  const formatTimeSaved = (ms: number): string => {
-    if (!ms || ms <= 0) return "0h";
-    const hours = ms / 3600000;
-    if (hours >= 0.1) {
-      return `${hours.toFixed(1)}h`;
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadData() {
+      try {
+        const analyticsData = await api.getAnalytics();
+        if (isMounted) {
+          setData(analyticsData);
+          setError(null);
+        }
+      } catch (err: unknown) {
+        if (isMounted) {
+          setError(getErrorMessage(err, "Failed to load analytics."));
+        }
+      } finally {
+        if (isMounted) {
+          setLoading(false);
+        }
+      }
     }
-    const minutes = ms / 60000;
-    if (minutes >= 0.1) {
-      return `${minutes.toFixed(1)}m`;
-    }
-    return `${(ms / 1000).toFixed(0)}s`;
-  };
+
+    loadData();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   if (loading) {
     return (
@@ -178,25 +202,25 @@ export default function AnalyticsPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {data.projects.map((p) => {
+                  {data.projects.map((projectItem) => {
                     let passColor = "var(--error)";
-                    if (p.passRate >= 80) passColor = "var(--success)";
-                    else if (p.passRate >= 50) passColor = "var(--warning)";
+                    if (projectItem.passRate >= 80) passColor = "var(--success)";
+                    else if (projectItem.passRate >= 50) passColor = "var(--warning)";
 
                     return (
-                      <tr key={p.id} style={{ borderBottom: "1px solid var(--border)", opacity: p.totalRuns > 0 ? 1 : 0.6 }}>
+                      <tr key={projectItem.id} style={{ borderBottom: "1px solid var(--border)", opacity: projectItem.totalRuns > 0 ? 1 : 0.6 }}>
                         <td className="py-3">
-                          <div className="font-medium" style={{ color: "var(--text-primary)" }}>{p.name}</div>
-                          <div className="text-[10px]" style={{ color: "var(--text-muted)" }}>{p.websiteUrl}</div>
+                          <div className="font-medium" style={{ color: "var(--text-primary)" }}>{projectItem.name}</div>
+                          <div className="text-[10px]" style={{ color: "var(--text-muted)" }}>{projectItem.websiteUrl}</div>
                         </td>
                         <td className="py-3 text-center" style={{ color: "var(--text-secondary)" }}>
-                          {p.totalRuns}
+                          {projectItem.totalRuns}
                         </td>
-                        <td className="py-3 text-right font-semibold" style={{ color: p.totalRuns > 0 ? passColor : "var(--text-muted)" }}>
-                          {p.totalRuns > 0 ? `${p.passRate}%` : "N/A"}
+                        <td className="py-3 text-right font-semibold" style={{ color: projectItem.totalRuns > 0 ? passColor : "var(--text-muted)" }}>
+                          {projectItem.totalRuns > 0 ? `${projectItem.passRate}%` : "N/A"}
                         </td>
-                        <td className="py-3 text-right capitalize" style={{ color: p.status === "active" ? "var(--success)" : "var(--text-muted)" }}>
-                          {p.status}
+                        <td className="py-3 text-right capitalize" style={{ color: projectItem.status === "active" ? "var(--success)" : "var(--text-muted)" }}>
+                          {projectItem.status}
                         </td>
                       </tr>
                     );

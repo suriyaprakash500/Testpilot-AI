@@ -1,8 +1,41 @@
 "use client";
 
+import Link from "next/link";
 import { use, useState, useEffect } from "react";
 import { ArrowLeft, CheckCircle2, XCircle, Trash2, Terminal, Code, Copy, Check } from "lucide-react";
-import { api, type TestRun, type TestCase } from "../../../../../lib/api";
+import { api, getErrorMessage, type TestRun, type TestCase } from "../../../../../lib/api";
+
+const TERMINAL_STATUSES = ["completed", "failed", "cancelled"];
+
+function getPipelineSteps(status: string) {
+  const stages = [
+    "Repo Analysis",
+    "Live Inspection",
+    "Code Analysis",
+    "App Understanding",
+    "Test Planning",
+    "Playwright Gen",
+    "Browser Execution",
+  ];
+  const order = [
+    "repo_analysis",
+    "page_inspection",
+    "code_analysis",
+    "app_understanding",
+    "test_planning",
+    "playwright_gen",
+    "execution",
+    "completed",
+  ];
+  const currentIdx = order.indexOf(status);
+
+  return stages.map((label, idx) => ({
+    label,
+    isDone: status === "completed" ? true : idx < currentIdx,
+    isActive: status !== "completed" && idx === currentIdx,
+    isFailed: status === "failed" && idx >= currentIdx && currentIdx !== -1,
+  }));
+}
 
 export default function RunDetailPage({
   params,
@@ -19,44 +52,68 @@ export default function RunDetailPage({
   const [activeTab, setActiveTab] = useState<"logs" | "code">("logs");
   const [copied, setCopied] = useState(false);
 
-  const loadData = async () => {
-    try {
-      const data = await api.getRunDetails(runId);
-      setRun(data.run);
-      setTestCases(data.testCases);
-      if (data.testCases.length > 0 && !selectedCaseId) {
-        const firstFailed = data.testCases.find((tc) => tc.status === "failed");
-        setSelectedCaseId(firstFailed ? firstFailed.id : data.testCases[0].id);
-      }
-    } catch (err: any) {
-      setError(err.message || "Failed to load run details");
-    } finally {
-      setLoading(false);
-    }
-  };
-
   useEffect(() => {
+    let isMounted = true;
+
+    async function loadData() {
+      try {
+        const data = await api.getRunDetails(runId);
+        if (isMounted) {
+          setRun(data.run);
+          setTestCases(data.testCases);
+          if (data.testCases.length > 0) {
+            const firstFailed = data.testCases.find((tc) => tc.status === "failed");
+            setSelectedCaseId(firstFailed ? firstFailed.id : data.testCases[0]?.id || null);
+          }
+        }
+      } catch (err: unknown) {
+        if (isMounted) {
+          setError(getErrorMessage(err, "Failed to load run details."));
+        }
+      } finally {
+        if (isMounted) {
+          setLoading(false);
+        }
+      }
+    }
+
     loadData();
 
-    const terminalStatuses = ["completed", "failed", "cancelled"];
     const timer = setInterval(() => {
-      if (run && !terminalStatuses.includes(run.status)) {
-        api.getRunDetails(runId)
-          .then((data) => {
+      api.getRunDetails(runId)
+        .then((data) => {
+          if (isMounted && data.run) {
             setRun(data.run);
             setTestCases(data.testCases);
-          })
-          .catch(() => { });
-      }
+            if (TERMINAL_STATUSES.includes(data.run.status)) {
+              clearInterval(timer);
+            }
+          }
+        })
+        .catch(() => {});
     }, 2000);
 
-    return () => clearInterval(timer);
-  }, [runId, run?.status]);
+    return () => {
+      isMounted = false;
+      clearInterval(timer);
+    };
+  }, [runId]);
 
   const handleCopyCode = (code: string) => {
     navigator.clipboard.writeText(code);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  };
+
+  const handleDeleteRun = async () => {
+    if (confirm("Delete this test run?")) {
+      try {
+        await api.deleteRun(runId);
+        window.location.href = `/dashboard/${projectId}`;
+      } catch (err: unknown) {
+        alert(getErrorMessage(err, "Failed to delete test run."));
+      }
+    }
   };
 
   if (loading) {
@@ -73,9 +130,9 @@ export default function RunDetailPage({
   if (error || !run) {
     return (
       <div className="p-8">
-        <a href={`/dashboard/${projectId}`} className="flex items-center gap-2 mb-6 text-sm" style={{ color: "var(--text-muted)" }}>
+        <Link href={`/dashboard/${projectId}`} className="flex items-center gap-2 mb-6 text-sm" style={{ color: "var(--text-muted)" }}>
           <ArrowLeft size={16} /> Back to Project
-        </a>
+        </Link>
         <p className="text-sm" style={{ color: "var(--error)" }}>{error || "Run not found"}</p>
       </div>
     );
@@ -84,24 +141,26 @@ export default function RunDetailPage({
   const passed = testCases.filter((t) => t.status === "passed").length;
   const failed = testCases.filter((t) => t.status === "failed").length;
   const total = testCases.length;
-  const passRate = total > 0 ? Math.round((passed / total) * 100) : 0;
   const selectedCase = testCases.find((tc) => tc.id === selectedCaseId) || testCases[0];
 
   return (
     <div className="p-6 max-w-7xl mx-auto h-[calc(100vh-3.5rem)] flex flex-col gap-5">
-
       {/* Header */}
       <div className="flex items-center justify-between border-b pb-4 flex-shrink-0" style={{ borderColor: "var(--border)" }}>
         <div className="flex items-center gap-3">
-          <a
+          <Link
             href={`/dashboard/${projectId}`}
             className="p-1 rounded-md transition-colors"
             style={{ color: "var(--text-muted)" }}
-            onMouseEnter={(e) => (e.currentTarget.style.color = "var(--text-primary)")}
-            onMouseLeave={(e) => (e.currentTarget.style.color = "var(--text-muted)")}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.color = "var(--text-primary)";
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.color = "var(--text-muted)";
+            }}
           >
             <ArrowLeft size={16} />
-          </a>
+          </Link>
           <div>
             <h1 className="text-md font-bold tracking-tight" style={{ color: "var(--text-primary)" }}>
               Test Run #{run.id.slice(0, 8)}
@@ -121,16 +180,7 @@ export default function RunDetailPage({
             </div>
           )}
           <button
-            onClick={async () => {
-              if (confirm("Delete this test run?")) {
-                try {
-                  await api.deleteRun(runId);
-                  window.location.href = `/dashboard/${projectId}`;
-                } catch (err: any) {
-                  alert(err.message || "Failed to delete test run");
-                }
-              }
-            }}
+            onClick={handleDeleteRun}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-semibold cursor-pointer"
             style={{ background: "rgba(239, 68, 68, 0.08)", border: "1px solid rgba(239, 68, 68, 0.15)", color: "var(--error)" }}
           >
@@ -186,7 +236,6 @@ export default function RunDetailPage({
         </div>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-5 gap-4 flex-1 overflow-hidden min-h-0">
-
           {/* Test Case List */}
           <div className="lg:col-span-2 glass overflow-y-auto p-3 space-y-1.5">
             <div className="text-[10px] uppercase font-bold tracking-wider px-2 mb-2 flex items-center justify-between" style={{ color: "var(--text-muted)" }}>
@@ -316,39 +365,8 @@ export default function RunDetailPage({
               </>
             )}
           </div>
-
         </div>
       )}
     </div>
   );
-}
-
-function getPipelineSteps(status: string) {
-  const stages = [
-    "Repo Analysis",
-    "Live Inspection",
-    "Code Analysis",
-    "App Understanding",
-    "Test Planning",
-    "Playwright Gen",
-    "Browser Execution",
-  ];
-  const order = [
-    "repo_analysis",
-    "page_inspection",
-    "code_analysis",
-    "app_understanding",
-    "test_planning",
-    "playwright_gen",
-    "execution",
-    "completed",
-  ];
-  const currentIdx = order.indexOf(status);
-
-  return stages.map((label, idx) => ({
-    label,
-    isDone: status === "completed" ? true : idx < currentIdx,
-    isActive: status !== "completed" && idx === currentIdx,
-    isFailed: status === "failed" && idx >= currentIdx && currentIdx !== -1,
-  }));
 }

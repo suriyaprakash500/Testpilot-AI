@@ -1,17 +1,25 @@
 "use client";
 
+import Link from "next/link";
 import { use, useState, useEffect } from "react";
 import { 
-  Play, Clock, CheckCircle2, XCircle, AlertTriangle, ChevronRight, ArrowLeft, Trash2,
-  Bot, GitBranch, FolderGit, Tv, Terminal, Sparkles, RefreshCw, Cpu, Layers, Code, PlaySquare, ShieldAlert
+  Play, 
+  Clock, 
+  CheckCircle2, 
+  XCircle, 
+  AlertTriangle, 
+  ChevronRight, 
+  ArrowLeft, 
+  Trash2 
 } from "lucide-react";
-import { api, type Project, type TestRun, type PipelinesData } from "../../../lib/api";
+import { api, getErrorMessage, type Project, type TestRun, type UpdateProjectInput } from "../../../lib/api";
 
 const STATUS_STYLES: Record<string, { icon: typeof CheckCircle2; color: string; label: string }> = {
   completed: { icon: CheckCircle2, color: "var(--success)", label: "Completed" },
   failed: { icon: XCircle, color: "var(--error)", label: "Failed" },
   executing: { icon: Play, color: "var(--accent)", label: "Running" },
   pending: { icon: Clock, color: "var(--warning)", label: "Pending" },
+  analyzing: { icon: Play, color: "var(--accent)", label: "Analyzing" },
 };
 
 export default function ProjectDetailPage({ params }: { params: Promise<{ projectId: string }> }) {
@@ -29,41 +37,52 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ projec
   const [savingCreds, setSavingCreds] = useState(false);
   const [credsSaved, setCredsSaved] = useState(false);
 
-  const loadData = async () => {
-    if (!isValidProjectId) {
-      setLoading(false);
-      return;
-    }
-    try {
-      const [projData, runsData] = await Promise.all([
-        api.getProject(projectId),
-        api.getRuns(projectId),
-      ]);
-      setProject(projData);
-      setRuns(runsData);
-    } catch (err: any) {
-      setError(err.message || "Failed to load project details");
-    } finally {
-      setLoading(false);
-    }
-  };
-
   useEffect(() => {
     if (!isValidProjectId) {
-      setError("Invalid Project ID format");
-      setLoading(false);
       return;
     }
-    loadData();
-    // Poll for status updates every 5 seconds if there are running or pending tests
-    const timer = setInterval(() => {
-      if (runs.some(r => r.status === "pending" || r.status === "executing")) {
-        api.getRuns(projectId).then(setRuns).catch(() => {});
+
+    let isMounted = true;
+
+    async function loadData() {
+      try {
+        const [projData, runsData] = await Promise.all([
+          api.getProject(projectId),
+          api.getRuns(projectId),
+        ]);
+        if (isMounted) {
+          setProject(projData);
+          setRuns(runsData);
+        }
+      } catch (err: unknown) {
+        if (isMounted) {
+          setError(getErrorMessage(err, "Failed to load project details."));
+        }
+      } finally {
+        if (isMounted) {
+          setLoading(false);
+        }
       }
+    }
+
+    loadData();
+
+    // Poll for status updates every 5 seconds
+    const timer = setInterval(() => {
+      api.getRuns(projectId)
+        .then((latestRuns) => {
+          if (isMounted) {
+            setRuns(latestRuns);
+          }
+        })
+        .catch(() => {});
     }, 5000);
 
-    return () => clearInterval(timer);
-  }, [projectId, runs, isValidProjectId]);
+    return () => {
+      isMounted = false;
+      clearInterval(timer);
+    };
+  }, [projectId, isValidProjectId]);
 
   const handleRunTests = async () => {
     if (!isValidProjectId) return;
@@ -72,12 +91,53 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ projec
       await api.triggerRun(projectId);
       const runsData = await api.getRuns(projectId);
       setRuns(runsData);
-    } catch (err: any) {
-      alert(err.message || "Failed to start test run");
+    } catch (err: unknown) {
+      alert(getErrorMessage(err, "Failed to start test run."));
     } finally {
       setRunningTest(false);
     }
   };
+
+  const handleSaveCredentials = async () => {
+    setSavingCreds(true);
+    setCredsSaved(false);
+    try {
+      const updates: UpdateProjectInput = {};
+      if (credEmail) updates.testEmail = credEmail;
+      if (credPassword) updates.testPassword = credPassword;
+      await api.updateProject(projectId, updates);
+      setCredsSaved(true);
+      setCredEmail("");
+      setCredPassword("");
+      setTimeout(() => setCredsSaved(false), 3000);
+    } catch (err: unknown) {
+      alert(getErrorMessage(err, "Failed to save credentials."));
+    } finally {
+      setSavingCreds(false);
+    }
+  };
+
+  const handleDeleteRun = async (runId: string) => {
+    if (confirm("Are you sure you want to delete this test run? This cannot be undone.")) {
+      try {
+        await api.deleteRun(runId);
+        setRuns((prev) => prev.filter((r) => r.id !== runId));
+      } catch (err: unknown) {
+        alert(getErrorMessage(err, "Failed to delete test run."));
+      }
+    }
+  };
+
+  if (!isValidProjectId) {
+    return (
+      <div className="p-8">
+        <div className="p-4 rounded-lg flex items-center gap-3" style={{ background: "rgba(239,68,68,0.1)", border: "1px solid var(--error)" }}>
+          <AlertTriangle size={18} style={{ color: "var(--error)" }} />
+          <span className="text-sm" style={{ color: "var(--error)" }}>Invalid Project ID format</span>
+        </div>
+      </div>
+    );
+  }
 
   if (loading) {
     return (
@@ -94,9 +154,9 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ projec
     return (
       <div className="p-8">
         <div className="flex items-center gap-3 mb-6">
-          <a href="/dashboard" className="p-1.5 rounded-md transition-colors" style={{ color: "var(--text-muted)" }}>
+          <Link href="/dashboard" className="p-1.5 rounded-md transition-colors" style={{ color: "var(--text-muted)" }}>
             <ArrowLeft size={18} />
-          </a>
+          </Link>
           <span style={{ color: "var(--text-primary)" }}>Back to Projects</span>
         </div>
         <div className="p-4 rounded-lg flex items-center gap-3" style={{ background: "rgba(239,68,68,0.1)", border: "1px solid var(--error)" }}>
@@ -112,7 +172,7 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ projec
       {/* Header */}
       <div className="border-b pb-4" style={{ borderColor: "var(--border)" }}>
         <div className="flex items-center gap-3">
-          <a
+          <Link
             href="/dashboard"
             className="p-1 rounded-md transition-colors"
             style={{ color: "var(--text-muted)" }}
@@ -120,7 +180,7 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ projec
             onMouseLeave={(e) => (e.currentTarget.style.color = "var(--text-muted)")}
           >
             <ArrowLeft size={16} />
-          </a>
+          </Link>
           <h1 className="text-lg font-bold tracking-tight" style={{ color: "var(--text-primary)" }}>
             {project.name}
           </h1>
@@ -188,8 +248,12 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ projec
               onChange={(e) => setCredEmail(e.target.value)}
               className="w-full px-3 py-1.5 rounded-lg text-xs outline-none transition-all"
               style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", color: "var(--text-primary)" }}
-              onFocus={(e) => (e.target.style.borderColor = "var(--accent)")}
-              onBlur={(e) => (e.target.style.borderColor = "var(--border)")}
+              onFocus={(e) => {
+                e.target.style.borderColor = "var(--accent)";
+              }}
+              onBlur={(e) => {
+                e.target.style.borderColor = "var(--border)";
+              }}
             />
           </div>
           <div className="flex-1">
@@ -201,30 +265,17 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ projec
               onChange={(e) => setCredPassword(e.target.value)}
               className="w-full px-3 py-1.5 rounded-lg text-xs outline-none transition-all"
               style={{ background: "var(--bg-primary)", border: "1px solid var(--border)", color: "var(--text-primary)" }}
-              onFocus={(e) => (e.target.style.borderColor = "var(--accent)")}
-              onBlur={(e) => (e.target.style.borderColor = "var(--border)")}
+              onFocus={(e) => {
+                e.target.style.borderColor = "var(--accent)";
+              }}
+              onBlur={(e) => {
+                e.target.style.borderColor = "var(--border)";
+              }}
             />
           </div>
           <button
             disabled={savingCreds || (!credEmail && !credPassword)}
-            onClick={async () => {
-              setSavingCreds(true);
-              setCredsSaved(false);
-              try {
-                const updates: any = {};
-                if (credEmail) updates.testEmail = credEmail;
-                if (credPassword) updates.testPassword = credPassword;
-                await api.updateProject(projectId, updates);
-                setCredsSaved(true);
-                setCredEmail("");
-                setCredPassword("");
-                setTimeout(() => setCredsSaved(false), 3000);
-              } catch (err: any) {
-                alert(err.message || "Failed to save credentials");
-              } finally {
-                setSavingCreds(false);
-              }
-            }}
+            onClick={handleSaveCredentials}
             className="px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer"
             style={{ background: "var(--gradient-1)", color: "white", opacity: savingCreds || (!credEmail && !credPassword) ? 0.5 : 1 }}
           >
@@ -244,7 +295,7 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ projec
             No test runs have been triggered for this project yet.
           </p>
           <button
-            className="text-xs text-indigo-400 font-semibold hover:underline"
+            className="text-xs text-indigo-400 font-semibold hover:underline cursor-pointer"
             onClick={handleRunTests}
           >
             Trigger first test run
@@ -257,7 +308,7 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ projec
             const StatusIcon = statusConfig.icon;
 
             return (
-              <a
+              <Link
                 key={run.id}
                 href={`/dashboard/${projectId}/runs/${run.id}`}
                 className="glass flex items-center justify-between p-4 transition-all duration-200 animate-slide-up block"
@@ -301,17 +352,10 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ projec
                     {statusConfig.label}
                   </span>
                   <button
-                    onClick={async (e) => {
+                    onClick={(e) => {
                       e.preventDefault();
                       e.stopPropagation();
-                      if (confirm("Are you sure you want to delete this test run? This cannot be undone.")) {
-                        try {
-                          await api.deleteRun(run.id);
-                          setRuns((prev) => prev.filter((r) => r.id !== run.id));
-                        } catch (err: any) {
-                          alert(err.message || "Failed to delete test run");
-                        }
-                      }
+                      handleDeleteRun(run.id);
                     }}
                     className="p-1.5 rounded transition-colors cursor-pointer flex items-center justify-center"
                     style={{ color: "var(--text-muted)", background: "transparent", border: "none" }}
@@ -329,7 +373,7 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ projec
                   </button>
                   <ChevronRight size={14} style={{ color: "var(--text-muted)" }} />
                 </div>
-              </a>
+              </Link>
             );
           })}
         </div>

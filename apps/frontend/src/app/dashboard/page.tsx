@@ -1,9 +1,23 @@
 "use client";
 
+import Link from "next/link";
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Plus, GitBranch, ChevronRight, AlertTriangle, ExternalLink, Layers } from "lucide-react";
-import { api, type Project, type AnalyticsData } from "../../lib/api";
+import { api, getErrorMessage, type Project, type AnalyticsData } from "../../lib/api";
+
+function formatTimeSaved(milliseconds: number): string {
+  if (!milliseconds || milliseconds <= 0) return "0h";
+  const hours = milliseconds / 3600000;
+  if (hours >= 0.1) {
+    return `${hours.toFixed(1)} hrs`;
+  }
+  const minutes = milliseconds / 60000;
+  if (minutes >= 0.1) {
+    return `${minutes.toFixed(1)} mins`;
+  }
+  return `${(milliseconds / 1000).toFixed(0)}s`;
+}
 
 export default function DashboardPage() {
   const router = useRouter();
@@ -12,7 +26,7 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Modal states
+  // New Project Modal state
   const [showNewProject, setShowNewProject] = useState(false);
   const [newRepoUrl, setNewRepoUrl] = useState("");
   const [newWebsiteUrl, setNewWebsiteUrl] = useState("");
@@ -20,19 +34,6 @@ export default function DashboardPage() {
   const [newTestPassword, setNewTestPassword] = useState("");
   const [creating, setCreating] = useState(false);
   const [modalError, setModalError] = useState<string | null>(null);
-
-  const formatTimeSaved = (ms: number): string => {
-    if (!ms || ms <= 0) return "0h";
-    const hours = ms / 3600000;
-    if (hours >= 0.1) {
-      return `${hours.toFixed(1)} hrs`;
-    }
-    const minutes = ms / 60000;
-    if (minutes >= 0.1) {
-      return `${minutes.toFixed(1)} mins`;
-    }
-    return `${(ms / 1000).toFixed(0)}s`;
-  };
 
   useEffect(() => {
     const token = localStorage.getItem("token");
@@ -49,8 +50,8 @@ export default function DashboardPage() {
         ]);
         setProjectsList(projectsData);
         setAnalytics(analyticsData);
-      } catch (err: any) {
-        setError(err.message || "Failed to load dashboard data");
+      } catch (err: unknown) {
+        setError(getErrorMessage(err, "Failed to load dashboard data."));
       } finally {
         setLoading(false);
       }
@@ -67,20 +68,20 @@ export default function DashboardPage() {
     setModalError(null);
 
     try {
-      const newProj = await api.createProject({
+      const newProject = await api.createProject({
         repoUrl: newRepoUrl,
         websiteUrl: newWebsiteUrl,
         ...(newTestEmail ? { testEmail: newTestEmail } : {}),
         ...(newTestPassword ? { testPassword: newTestPassword } : {}),
       });
-      setProjectsList((prev) => [...prev, newProj]);
+      setProjectsList((prev) => [...prev, newProject]);
       setShowNewProject(false);
       setNewRepoUrl("");
       setNewWebsiteUrl("");
       setNewTestEmail("");
       setNewTestPassword("");
-    } catch (err: any) {
-      setModalError(err.message || "Failed to create project");
+    } catch (err: unknown) {
+      setModalError(getErrorMessage(err, "Failed to create project."));
     } finally {
       setCreating(false);
     }
@@ -96,6 +97,14 @@ export default function DashboardPage() {
       </div>
     );
   }
+
+  const statCards = [
+    { label: "Total Tests Executed", value: analytics ? String(analytics.totalCases) : "0", detail: "Evaluated assertions" },
+    { label: "Average Pass Rate", value: analytics ? `${analytics.averagePassRate}%` : "0%", detail: "Pass efficiency" },
+    { label: "Total Time Saved", value: analytics ? formatTimeSaved(analytics.totalTimeSavedMs) : "0 hrs", detail: "Parallel runs" },
+    { label: "Failed Run Alerts", value: analytics ? String(analytics.failedRunAlerts) : "0", detail: "Requires attention" },
+    { label: "Total Suite Runs", value: analytics ? String(analytics.totalRuns) : "0", detail: "All-time executions" },
+  ];
 
   return (
     <div className="p-8 space-y-8 max-w-7xl mx-auto">
@@ -127,15 +136,9 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* Hero Metrics Cards */}
+      {/* Metrics Cards */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
-        {[
-          { label: "Total Tests Executed", value: analytics ? String(analytics.totalCases) : "0", detail: "Evaluated assertions" },
-          { label: "Average Pass Rate", value: analytics ? `${analytics.averagePassRate}%` : "0%", detail: "Pass efficiency" },
-          { label: "Total Time Saved", value: analytics ? formatTimeSaved(analytics.totalTimeSavedMs) : "0 hrs", detail: "Parallel runs" },
-          { label: "Failed Run Alerts", value: analytics ? String(analytics.failedRunAlerts) : "0", detail: "Requires attention" },
-          { label: "Total Suite Runs", value: analytics ? String(analytics.totalRuns) : "0", detail: "All-time executions" },
-        ].map((stat) => (
+        {statCards.map((stat) => (
           <div key={stat.label} className="glass p-4 relative overflow-hidden group hover:translate-y-[-2px] duration-300">
             <div className="text-[10px] tracking-tight uppercase" style={{ color: "var(--text-muted)" }}>
               {stat.label}
@@ -179,7 +182,7 @@ export default function DashboardPage() {
         ) : (
           <div className="space-y-3">
             {projectsList.map((project, i) => (
-              <a
+              <Link
                 key={project.id}
                 href={`/dashboard/${project.id}`}
                 className="glass flex items-center justify-between p-4 transition-all duration-200 animate-slide-up block"
@@ -210,7 +213,7 @@ export default function DashboardPage() {
                 </div>
 
                 <ChevronRight size={14} style={{ color: "var(--text-muted)" }} />
-              </a>
+              </Link>
             ))}
           </div>
         )}
@@ -256,8 +259,12 @@ export default function DashboardPage() {
                     border: "1px solid var(--border)",
                     color: "var(--text-primary)",
                   }}
-                  onFocus={(e) => (e.target.style.borderColor = "var(--accent)")}
-                  onBlur={(e) => (e.target.style.borderColor = "var(--border)")}
+                  onFocus={(e) => {
+                    e.target.style.borderColor = "var(--accent)";
+                  }}
+                  onBlur={(e) => {
+                    e.target.style.borderColor = "var(--border)";
+                  }}
                 />
               </div>
               <div>
@@ -277,8 +284,12 @@ export default function DashboardPage() {
                     border: "1px solid var(--border)",
                     color: "var(--text-primary)",
                   }}
-                  onFocus={(e) => (e.target.style.borderColor = "var(--accent)")}
-                  onBlur={(e) => (e.target.style.borderColor = "var(--border)")}
+                  onFocus={(e) => {
+                    e.target.style.borderColor = "var(--accent)";
+                  }}
+                  onBlur={(e) => {
+                    e.target.style.borderColor = "var(--border)";
+                  }}
                 />
               </div>
 
@@ -300,8 +311,12 @@ export default function DashboardPage() {
                       border: "1px solid var(--border)",
                       color: "var(--text-primary)",
                     }}
-                    onFocus={(e) => (e.target.style.borderColor = "var(--accent)")}
-                    onBlur={(e) => (e.target.style.borderColor = "var(--border)")}
+                    onFocus={(e) => {
+                      e.target.style.borderColor = "var(--accent)";
+                    }}
+                    onBlur={(e) => {
+                      e.target.style.borderColor = "var(--border)";
+                    }}
                   />
                   <input
                     id="modal-test-password"
@@ -315,8 +330,12 @@ export default function DashboardPage() {
                       border: "1px solid var(--border)",
                       color: "var(--text-primary)",
                     }}
-                    onFocus={(e) => (e.target.style.borderColor = "var(--accent)")}
-                    onBlur={(e) => (e.target.style.borderColor = "var(--border)")}
+                    onFocus={(e) => {
+                      e.target.style.borderColor = "var(--accent)";
+                    }}
+                    onBlur={(e) => {
+                      e.target.style.borderColor = "var(--border)";
+                    }}
                   />
                 </div>
               </div>

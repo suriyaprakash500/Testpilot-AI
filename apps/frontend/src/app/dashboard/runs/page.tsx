@@ -1,14 +1,16 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import { Clock, Play, CheckCircle2, XCircle, ChevronRight, Trash2 } from "lucide-react";
-import { api, type TestRun } from "../../../lib/api";
+import { api, getErrorMessage, type TestRun } from "../../../lib/api";
 
 const STATUS_STYLES: Record<string, { icon: typeof CheckCircle2; color: string; label: string }> = {
   completed: { icon: CheckCircle2, color: "var(--success)", label: "Completed" },
   failed: { icon: XCircle, color: "var(--error)", label: "Failed" },
   executing: { icon: Play, color: "var(--accent)", label: "Running" },
   pending: { icon: Clock, color: "var(--warning)", label: "Pending" },
+  analyzing: { icon: Play, color: "var(--accent)", label: "Analyzing" },
 };
 
 interface RunWithProject extends TestRun {
@@ -24,11 +26,11 @@ export default function RunsPage() {
     async function loadAllRuns() {
       try {
         const projects = await api.getProjects();
-        const runsPromises = projects.map(async (proj) => {
-          const projectRuns = await api.getRuns(proj.id);
+        const runsPromises = projects.map(async (project) => {
+          const projectRuns = await api.getRuns(project.id);
           return projectRuns.map((run) => ({
             ...run,
-            projectName: proj.name,
+            projectName: project.name,
           }));
         });
         const allRunsNested = await Promise.all(runsPromises);
@@ -36,14 +38,25 @@ export default function RunsPage() {
           new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
         );
         setRuns(allRuns);
-      } catch (err: any) {
-        setError(err.message || "Failed to load test runs");
+      } catch (err: unknown) {
+        setError(getErrorMessage(err, "Failed to load test runs."));
       } finally {
         setLoading(false);
       }
     }
     loadAllRuns();
   }, []);
+
+  const handleDeleteRun = async (runId: string) => {
+    if (confirm("Are you sure you want to delete this test run? This cannot be undone.")) {
+      try {
+        await api.deleteRun(runId);
+        setRuns((prev) => prev.filter((r) => r.id !== runId));
+      } catch (err: unknown) {
+        alert(getErrorMessage(err, "Failed to delete test run."));
+      }
+    }
+  };
 
   if (loading) {
     return (
@@ -80,9 +93,9 @@ export default function RunsPage() {
               Once you start running tests on your projects, your runs will be logged here.
             </p>
           </div>
-          <a href="/dashboard" className="px-4 py-2 rounded-lg text-sm font-semibold transition-all duration-200" style={{ background: "var(--gradient-1)", color: "white" }}>
+          <Link href="/dashboard" className="px-4 py-2 rounded-lg text-sm font-semibold transition-all duration-200" style={{ background: "var(--gradient-1)", color: "white" }}>
             Go to Projects
-          </a>
+          </Link>
         </div>
       ) : (
         <div className="space-y-2">
@@ -91,7 +104,7 @@ export default function RunsPage() {
             const StatusIcon = statusConfig.icon;
 
             return (
-              <a
+              <Link
                 key={run.id}
                 href={`/dashboard/${run.projectId}/runs/${run.id}`}
                 className="glass flex items-center justify-between p-4 transition-all duration-200 block"
@@ -129,17 +142,10 @@ export default function RunsPage() {
                     {statusConfig.label}
                   </span>
                   <button
-                    onClick={async (e) => {
+                    onClick={(e) => {
                       e.preventDefault();
                       e.stopPropagation();
-                      if (confirm("Are you sure you want to delete this test run? This cannot be undone.")) {
-                        try {
-                          await api.deleteRun(run.id);
-                          setRuns((prev) => prev.filter((r) => r.id !== run.id));
-                        } catch (err: any) {
-                          alert(err.message || "Failed to delete test run");
-                        }
-                      }
+                      handleDeleteRun(run.id);
                     }}
                     className="p-1.5 rounded transition-colors cursor-pointer flex items-center justify-center"
                     style={{ color: "var(--text-muted)", background: "transparent", border: "none" }}
@@ -157,7 +163,7 @@ export default function RunsPage() {
                   </button>
                   <ChevronRight size={14} style={{ color: "var(--text-muted)" }} />
                 </div>
-              </a>
+              </Link>
             );
           })}
         </div>

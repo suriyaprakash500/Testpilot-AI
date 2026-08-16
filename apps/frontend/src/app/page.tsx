@@ -2,7 +2,25 @@
 
 import { useState } from "react";
 import { Zap, GitBranch, Globe, ArrowRight, Shield, BarChart3, Bot } from "lucide-react";
-import { api } from "../lib/api";
+import { api, getErrorMessage } from "../lib/api";
+
+const FEATURE_CARDS = [
+  {
+    icon: Bot,
+    title: "AI-Powered Analysis",
+    description: "Understands your app structure, routes, components, and auth flows automatically.",
+  },
+  {
+    icon: Shield,
+    title: "Smart Test Generation",
+    description: "Generates robust Playwright tests with resilient locators and proper assertions.",
+  },
+  {
+    icon: BarChart3,
+    title: "Debugging Insights",
+    description: "Analyzes failures with AI, finds root causes, and suggests fixes with screenshots.",
+  },
+] as const;
 
 export default function HomePage() {
   const [repoUrl, setRepoUrl] = useState("");
@@ -10,12 +28,38 @@ export default function HomePage() {
   const [testing, setTesting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const handleStartTesting = async () => {
+    if (!repoUrl || !websiteUrl || testing) {
+      return;
+    }
+
+    setTesting(true);
+    setError(null);
+
+    try {
+      if (!localStorage.getItem("token")) {
+        localStorage.setItem("token", "dev-mock-jwt-token");
+      }
+      const project = await api.createProject({ repoUrl, websiteUrl });
+      window.location.href = `/dashboard/${project.id}`;
+    } catch (err: unknown) {
+      setError(getErrorMessage(err, "Failed to initialize workspace."));
+      setTesting(false);
+    }
+  };
+
+  const isFormValid = Boolean(repoUrl.trim() && websiteUrl.trim() && !testing);
+
   return (
     <div className="min-h-screen" style={{ background: "var(--bg-primary)" }}>
-      {/* Nav */}
+      {/* Navigation */}
       <nav
         className="fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-6 py-4"
-        style={{ background: "rgba(9,9,11,0.8)", backdropFilter: "blur(12px)", borderBottom: "1px solid var(--border)" }}
+        style={{
+          background: "rgba(9,9,11,0.8)",
+          backdropFilter: "blur(12px)",
+          borderBottom: "1px solid var(--border)",
+        }}
       >
         <div className="flex items-center gap-2">
           <div
@@ -50,12 +94,16 @@ export default function HomePage() {
         </a>
       </nav>
 
-      {/* Hero */}
+      {/* Hero Section */}
       <main className="pt-32 px-6 max-w-5xl mx-auto">
         <div className="text-center animate-fade-in">
           <div
             className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-medium mb-6"
-            style={{ background: "var(--accent-glow)", color: "var(--accent-hover)", border: "1px solid rgba(99,102,241,0.3)" }}
+            style={{
+              background: "var(--accent-glow)",
+              color: "var(--accent-hover)",
+              border: "1px solid rgba(99,102,241,0.3)",
+            }}
           >
             <span className="w-1.5 h-1.5 rounded-full pulse-dot" style={{ background: "var(--accent)" }} />
             AI-Powered Testing Platform
@@ -77,10 +125,7 @@ export default function HomePage() {
           </p>
 
           {/* Onboarding Form */}
-          <div
-            className="glass max-w-xl mx-auto p-6 animate-slide-up"
-            style={{ animationDelay: "0.2s" }}
-          >
+          <div className="glass max-w-xl mx-auto p-6 animate-slide-up" style={{ animationDelay: "0.2s" }}>
             <div className="space-y-4">
               <div className="text-left">
                 <label className="text-sm font-medium mb-1.5 block" style={{ color: "var(--text-secondary)" }}>
@@ -104,8 +149,12 @@ export default function HomePage() {
                       border: "1px solid var(--border)",
                       color: "var(--text-primary)",
                     }}
-                    onFocus={(e) => (e.target.style.borderColor = "var(--accent)")}
-                    onBlur={(e) => (e.target.style.borderColor = "var(--border)")}
+                    onFocus={(e) => {
+                      e.target.style.borderColor = "var(--accent)";
+                    }}
+                    onBlur={(e) => {
+                      e.target.style.borderColor = "var(--border)";
+                    }}
                   />
                 </div>
               </div>
@@ -132,8 +181,12 @@ export default function HomePage() {
                       border: "1px solid var(--border)",
                       color: "var(--text-primary)",
                     }}
-                    onFocus={(e) => (e.target.style.borderColor = "var(--accent)")}
-                    onBlur={(e) => (e.target.style.borderColor = "var(--border)")}
+                    onFocus={(e) => {
+                      e.target.style.borderColor = "var(--accent)";
+                    }}
+                    onBlur={(e) => {
+                      e.target.style.borderColor = "var(--border)";
+                    }}
                   />
                 </div>
               </div>
@@ -146,28 +199,14 @@ export default function HomePage() {
 
               <button
                 id="start-testing-btn"
-                className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-lg text-sm font-semibold transition-all duration-200"
+                className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-lg text-sm font-semibold transition-all duration-200 cursor-pointer"
                 style={{
                   background: "var(--gradient-1)",
                   color: "white",
-                  opacity: repoUrl && websiteUrl && !testing ? 1 : 0.5,
+                  opacity: isFormValid ? 1 : 0.5,
                 }}
-                disabled={!repoUrl || !websiteUrl || testing}
-                onClick={async () => {
-                  setTesting(true);
-                  setError(null);
-                  try {
-                    // Pre-authenticate locally if no token exists
-                    if (!localStorage.getItem("token")) {
-                      localStorage.setItem("token", "dev-mock-jwt-token");
-                    }
-                    const proj = await api.createProject({ repoUrl, websiteUrl });
-                    window.location.href = `/dashboard/${proj.id}`;
-                  } catch (err: any) {
-                    setError(err.message || "Failed to start testing workspace.");
-                    setTesting(false);
-                  }
-                }}
+                disabled={!isFormValid}
+                onClick={handleStartTesting}
               >
                 {testing ? "Initializing Workspace..." : "Start Testing"}
                 <ArrowRight size={16} />
@@ -176,31 +215,13 @@ export default function HomePage() {
           </div>
         </div>
 
-        {/* Features */}
-        <div
-          className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-24 mb-20"
-        >
-          {[
-            {
-              icon: Bot,
-              title: "AI-Powered Analysis",
-              desc: "Understands your app structure, routes, components, and auth flows automatically.",
-            },
-            {
-              icon: Shield,
-              title: "Smart Test Generation",
-              desc: "Generates robust Playwright tests with resilient locators and proper assertions.",
-            },
-            {
-              icon: BarChart3,
-              title: "Debugging Insights",
-              desc: "Analyzes failures with AI, finds root causes, and suggests fixes with screenshots.",
-            },
-          ].map((feature, i) => (
+        {/* Feature Highlights */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-24 mb-20">
+          {FEATURE_CARDS.map((feature, index) => (
             <div
               key={feature.title}
               className="glass p-6 animate-slide-up transition-all duration-300"
-              style={{ animationDelay: `${0.3 + i * 0.1}s` }}
+              style={{ animationDelay: `${0.3 + index * 0.1}s` }}
               onMouseEnter={(e) => {
                 e.currentTarget.style.borderColor = "var(--border-hover)";
                 e.currentTarget.style.transform = "translateY(-2px)";
@@ -220,7 +241,7 @@ export default function HomePage() {
                 {feature.title}
               </h3>
               <p className="text-sm leading-relaxed" style={{ color: "var(--text-secondary)" }}>
-                {feature.desc}
+                {feature.description}
               </p>
             </div>
           ))}

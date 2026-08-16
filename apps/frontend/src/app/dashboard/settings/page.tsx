@@ -1,18 +1,28 @@
 "use client";
 
+import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { LogOut, User, Globe, GitBranch } from "lucide-react";
 import { useEffect, useState } from "react";
-import { api } from "../../../lib/api";
+import { api, type UserProfile } from "../../../lib/api";
 
 export default function SettingsPage() {
   const router = useRouter();
-  const [user, setUser] = useState<{ name: string; email: string; avatarUrl: string } | null>(null);
+  const [user, setUser] = useState<UserProfile | null>(null);
 
   useEffect(() => {
+    let isMounted = true;
     api.getCurrentUser()
-      .then(setUser)
+      .then((profile) => {
+        if (isMounted) {
+          setUser(profile);
+        }
+      })
       .catch(() => {});
+
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
   const handleLogout = () => {
@@ -35,7 +45,14 @@ export default function SettingsPage() {
           <h2 className="text-base font-semibold mb-4" style={{ color: "var(--text-primary)" }}>Account Profile</h2>
           <div className="flex items-center gap-4">
             {user?.avatarUrl ? (
-              <img src={user.avatarUrl} alt="Avatar" className="w-12 h-12 rounded-full" />
+              <Image 
+                src={user.avatarUrl} 
+                alt="Avatar" 
+                width={48} 
+                height={48} 
+                unoptimized
+                className="w-12 h-12 rounded-full" 
+              />
             ) : (
               <div className="w-12 h-12 rounded-full flex items-center justify-center" style={{ background: "var(--bg-tertiary)" }}>
                 <User size={24} style={{ color: "var(--text-muted)" }} />
