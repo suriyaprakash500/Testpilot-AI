@@ -2,6 +2,7 @@ import logging
 from typing import Dict, Any, List
 from app.graph.state import TestPilotState
 from playwright.async_api import async_playwright
+from app.graph.playwright_runner import run_playwright
 
 logger = logging.getLogger("graph-page-inspection")
 
@@ -96,7 +97,8 @@ async def page_inspection_node(state: TestPilotState) -> Dict[str, Any]:
     logger.info(f"[Node: page_inspection] Inspecting {len(routes)} routes for run {run_id}")
     inspections: List[Dict[str, Any]] = []
 
-    try:
+    async def _run_inspection():
+        """Inner async function that runs inside a ProactorEventLoop thread."""
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)
             context = await browser.new_context()
@@ -144,39 +146,35 @@ async def page_inspection_node(state: TestPilotState) -> Dict[str, Any]:
                         // Inputs
                         const inputs = Array.from(document.querySelectorAll('input, select, textarea'))
                             .filter(isVisible)
-                            .map(input => {
-                                const type = input.tagName.toLowerCase() === 'select' ? 'select' : input.tagName.toLowerCase() === 'textarea' ? 'textarea' : input.type;
-                                return {
-                                    type,
-                                    name: input.name || undefined,
-                                    id: input.id || undefined,
-                                    placeholder: getAttr(input, 'placeholder'),
-                                    dataTestId: getAttr(input, 'data-testid'),
-                                    ariaLabel: getAttr(input, 'aria-label'),
-                                    label: document.querySelector(`label[for="${input.id}"]`)?.innerText.trim() || getAttr(input, 'aria-label') || undefined
-                                };
-                            });
+                            .map(inp => ({
+                                type: inp.type || 'text',
+                                name: getAttr(inp, 'name'),
+                                placeholder: getAttr(inp, 'placeholder'),
+                                label: inp.labels?.[0]?.innerText?.trim(),
+                                required: inp.required,
+                                id: inp.id || undefined,
+                                ariaLabel: getAttr(inp, 'aria-label')
+                            }));
 
                         // Forms
-                        const forms = Array.from(document.querySelectorAll('form'))
-                            .filter(isVisible)
-                            .map(form => ({
-                                id: form.id || undefined,
-                                action: getAttr(form, 'action'),
-                                inputsCount: form.querySelectorAll('input, select, textarea').length
-                            }));
+                        const forms = Array.from(document.querySelectorAll('form')).map(f => ({
+                            action: getAttr(f, 'action'),
+                            method: getAttr(f, 'method') || 'GET',
+                            fields: Array.from(f.querySelectorAll('input, select, textarea')).map(inp => ({
+                                type: inp.type || 'text',
+                                name: getAttr(inp, 'name'),
+                                placeholder: getAttr(inp, 'placeholder')
+                            }))
+                        }));
 
                         // Tables
-                        const tables = Array.from(document.querySelectorAll('table'))
-                            .filter(isVisible)
-                            .map(table => ({
-                                id: table.id || undefined,
-                                rowsCount: table.querySelectorAll('tr').length,
-                                headers: Array.from(table.querySelectorAll('th')).map(th => th.innerText.trim()).filter(Boolean)
-                            }));
+                        const tables = Array.from(document.querySelectorAll('table')).map(t => ({
+                            rows: t.rows?.length || 0,
+                            headers: Array.from(t.querySelectorAll('th')).map(th => th.innerText.trim())
+                        }));
 
                         // Cards
-                        const cards = Array.from(document.querySelectorAll('.card, [class*="card" i], article, .product-item'))
+                        const cards = Array.from(document.querySelectorAll('[class*="card" i], article, .card'))
                             .filter(isVisible)
                             .map(card => ({
                             title: card.querySelector('h1, h2, h3, h4, h5, h6, .card-title, [class*="title" i]')?.innerText.trim(),
@@ -220,9 +218,12 @@ async def page_inspection_node(state: TestPilotState) -> Dict[str, Any]:
                     # hallucinated selectors during LLM-powered repairs.
                     accessibility_tree = ""
                     try:
-                        aom_snapshot = await page.accessibility.snapshot()
-                        if aom_snapshot:
-                            accessibility_tree = _format_accessibility_tree(aom_snapshot)
+                        if hasattr(page.locator("body"), "aria_snapshot"):
+                            accessibility_tree = await page.locator("body").aria_snapshot()
+                        elif hasattr(page, "accessibility") and page.accessibility is not None:
+                            aom_snapshot = await page.accessibility.snapshot()
+                            if aom_snapshot:
+                                accessibility_tree = _format_accessibility_tree(aom_snapshot)
                     except Exception as aom_err:
                         logger.warning(f"[Node: page_inspection] AOM extraction failed for {route}: {aom_err}")
 
@@ -254,6 +255,9 @@ async def page_inspection_node(state: TestPilotState) -> Dict[str, Any]:
                     logger.error(f"[Node: page_inspection] Failed route inspection for {route}: {route_err}")
 
             await browser.close()
+
+    try:
+        await run_playwright(_run_inspection)
     except Exception as e:
         logger.error(f"[Node: page_inspection] Playwright inspection failed: {e}")
 

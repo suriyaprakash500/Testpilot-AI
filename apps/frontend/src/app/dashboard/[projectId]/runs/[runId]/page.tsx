@@ -5,7 +5,7 @@ import { use, useState, useEffect } from "react";
 import { ArrowLeft, CheckCircle2, XCircle, Trash2, Terminal, Code, Copy, Check } from "lucide-react";
 import { api, getErrorMessage, type TestRun, type TestCase } from "../../../../../lib/api";
 
-const TERMINAL_STATUSES = ["completed", "failed", "cancelled"];
+const TERMINAL_STATUSES = ["completed", "completed_with_failures", "failed", "cancelled"];
 
 function getPipelineSteps(status: string) {
   const stages = [
@@ -26,13 +26,15 @@ function getPipelineSteps(status: string) {
     "playwright_gen",
     "execution",
     "completed",
+    "completed_with_failures",
   ];
+  const isTerminalSuccess = status === "completed" || status === "completed_with_failures";
   const currentIdx = order.indexOf(status);
 
   return stages.map((label, idx) => ({
     label,
-    isDone: status === "completed" ? true : idx < currentIdx,
-    isActive: status !== "completed" && idx === currentIdx,
+    isDone: isTerminalSuccess ? true : idx < currentIdx,
+    isActive: !isTerminalSuccess && idx === currentIdx,
     isFailed: status === "failed" && idx >= currentIdx && currentIdx !== -1,
   }));
 }

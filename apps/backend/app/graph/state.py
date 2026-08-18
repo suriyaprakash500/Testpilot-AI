@@ -49,8 +49,8 @@ class TestPilotState(TypedDict):
     repair_attempts: Annotated[Dict[str, int], merge_dicts]
     # Per-test inconclusive retry counter: { test_id: count }
     inconclusive_retries: Annotated[Dict[str, int], merge_dicts]
-    # Per-test repaired code: { test_id: updated_code }
-    repaired_tests: Annotated[Dict[str, str], merge_dicts]
+    # Per-test repaired steps: { test_id: [step_dicts] }
+    repaired_tests: Annotated[Dict[str, list], merge_dicts]
     # Accumulating list of suspected application bugs
     suspected_app_bugs: Annotated[List[dict], add]
     # Test IDs to execute in the next cycle (None = execute all)

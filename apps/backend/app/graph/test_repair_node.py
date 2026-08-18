@@ -92,8 +92,12 @@ def _build_repair_prompt(
     return "\n".join(lines)
 
 
-async def _llm_repair_test(repair_context: str, root_cause: str) -> str:
-    """Sends the repair context to the LLM to generate corrected code."""
+async def _llm_repair_test(repair_context: str, root_cause: str) -> list:
+    """Sends the repair context to the LLM to generate corrected test steps.
+
+    Returns a list of step dicts in the format consumed by browser_execution_node:
+    [{"action": "navigate", "value": "..."}, {"action": "assert_visible", ...}]
+    """
     from langchain_groq import ChatGroq
 
     llm = ChatGroq(
@@ -109,9 +113,9 @@ async def _llm_repair_test(repair_context: str, root_cause: str) -> str:
             "Use ONLY elements that actually exist in the ground truth data."
         ),
         "timing_issue": (
-            "The element exists but was not ready when the assertion ran. Add explicit "
-            "waits (e.g., page.wait_for_selector, page.wait_for_load_state, or "
-            "page.wait_for_timeout) before the failing interaction."
+            "The element exists but was not ready when the assertion ran. Add a "
+            "'wait_for_load' step before the failing interaction, or increase the "
+            "assertion timeout."
         ),
         "test_assumption_wrong": (
             "The test logic is incorrect. Fix the navigation flow, expected values, "
@@ -122,7 +126,7 @@ async def _llm_repair_test(repair_context: str, root_cause: str) -> str:
 
     strategy = repair_strategies.get(root_cause, repair_strategies["selector_wrong"])
 
-    prompt = f"""You are a senior Playwright test engineer. A generated E2E test has failed, and you must repair it.
+    prompt = f"""You are a senior QA engineer. A generated E2E test has failed, and you must repair it.
 
 REPAIR STRATEGY: {strategy}
 
@@ -130,18 +134,42 @@ REPAIR STRATEGY: {strategy}
 {repair_context}
 === END CONTEXT ===
 
-RULES:
-1. Fix ONLY the specific issue identified by the root cause. Do not rewrite unrelated parts.
-2. Use ONLY elements that exist in the "Actual page elements" section above. Do NOT invent selectors.
-3. Preserve the original test structure and assertion intent.
-4. NEVER weaken or remove assertions to force a pass. If the assertion is correct, keep it.
-5. The test uses pytest-asyncio with Playwright async API (async def, await, Page, expect).
+Return a JSON array of repaired test steps. Each step is an object with one of these formats:
 
-Return ONLY the complete repaired test function code (starting from @pytest.mark.asyncio).
-No markdown fences, no explanation, no imports."""
+1. Navigate: {{"action": "navigate", "value": "https://example.com/page"}}
+2. Click: {{"action": "click", "name": "Button Text"}}
+3. Fill: {{"action": "fill", "label": "Input Label", "value": "test value"}}
+4. Assert visible by role: {{"action": "assert_visible", "locator_type": "role", "role": "heading", "name": "Page Title"}}
+5. Assert visible by text: {{"action": "assert_visible", "locator_type": "text", "text": "Some text on page"}}
+
+RULES:
+1. Fix ONLY the specific issue identified by the root cause.
+2. Use ONLY elements that exist in the "Actual page elements" section above.
+3. Do NOT invent selectors or element names that were not in the evidence.
+4. Keep the original test intent — do NOT remove assertions to force a pass.
+
+Return ONLY the JSON array. No markdown fences, no explanation."""
 
     response = await llm.ainvoke(prompt)
-    return response.content.strip()
+    content = response.content.strip()
+
+    if content.startswith("```"):
+        content = content.split("\n", 1)[1]
+        if content.endswith("```"):
+            content = content.rsplit("```", 1)[0]
+        content = content.strip()
+
+    try:
+        steps = json.loads(content)
+        if isinstance(steps, list) and len(steps) > 0:
+            return steps
+        return None
+    except json.JSONDecodeError:
+        logger.warning(
+            "LLM returned non-JSON for test repair",
+            extra={"raw_response": content[:200]}
+        )
+        return None
 
 
 async def test_repair_node(state: TestPilotState) -> Dict[str, Any]:
@@ -175,7 +203,7 @@ async def test_repair_node(state: TestPilotState) -> Dict[str, Any]:
     )
 
     new_repair_attempts: Dict[str, int] = {}
-    new_repaired_tests: Dict[str, str] = {}
+    new_repaired_tests: Dict[str, list] = {}
     repaired_ids: List[str] = []
 
     for test_id, analysis in repairable_tests.items():
@@ -201,20 +229,25 @@ async def test_repair_node(state: TestPilotState) -> Dict[str, Any]:
         )
 
         try:
-            repaired_code = await _llm_repair_test(
+            repaired_steps = await _llm_repair_test(
                 repair_context, analysis.get("root_cause", "selector_wrong")
             )
 
-            if repaired_code and len(repaired_code) > 20:
-                new_repaired_tests[test_id] = repaired_code
+            if repaired_steps:
+                new_repaired_tests[test_id] = repaired_steps
                 repaired_ids.append(test_id)
                 logger.info(
                     "Test repaired successfully",
-                    extra={"run_id": run_id, "test_id": test_id, "attempt": new_attempt_count}
+                    extra={
+                        "run_id": run_id,
+                        "test_id": test_id,
+                        "attempt": new_attempt_count,
+                        "repaired_steps_count": len(repaired_steps),
+                    }
                 )
             else:
                 logger.warning(
-                    "LLM returned insufficient repair code",
+                    "LLM returned insufficient repair data",
                     extra={"run_id": run_id, "test_id": test_id}
                 )
         except Exception as e:
@@ -224,16 +257,6 @@ async def test_repair_node(state: TestPilotState) -> Dict[str, Any]:
             )
 
         new_repair_attempts[test_id] = new_attempt_count
-
-    # Update generated_tests with the repaired code
-    updated_generated_tests = None
-    if generated_tests and new_repaired_tests:
-        updated_code = generated_tests[0].get("code", "")
-        # Replace repaired test functions in the suite code.
-        # In a full implementation, each function would be replaced by name.
-        updated_generated_tests = [
-            {**generated_tests[0], "code": updated_code}
-        ]
 
     summary = (
         f"Repaired {len(repaired_ids)} tests. "
@@ -250,7 +273,5 @@ async def test_repair_node(state: TestPilotState) -> Dict[str, Any]:
     if new_repaired_tests:
         result["repaired_tests"] = new_repaired_tests
 
-    if updated_generated_tests:
-        result["generated_tests"] = updated_generated_tests
-
     return result
+

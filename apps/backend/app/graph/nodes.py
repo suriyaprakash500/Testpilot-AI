@@ -9,7 +9,8 @@ from app.graph.tools import (
     create_github_pull_request
 )
 from app.auth.auth_manager import auth_manager
-from playwright.async_api import async_playwright
+from playwright.async_api import async_playwright, expect
+from app.graph.playwright_runner import run_playwright
 
 logger = logging.getLogger("graph-nodes")
 
@@ -201,24 +202,101 @@ async def playwright_gen_node(state: TestPilotState) -> Dict[str, Any]:
     }
 
 
+def _normalize_test_id(name: str) -> str:
+    """Normalizes a test name into a stable ID for state key lookups."""
+    return name.lower().replace(" ", "_").replace(":", "").strip("_")
+
+
+def _get_error_message(exc: Exception) -> str:
+    """Extracts a non-empty error message from an exception.
+
+    Playwright sometimes raises exceptions whose str() is empty.
+    Falls back to repr() or the class name to always provide context.
+    """
+    msg = str(exc)
+    if msg:
+        return msg
+    msg = repr(exc)
+    if msg and msg != type(exc).__name__ + "()":
+        return msg
+    return f"{type(exc).__name__}: (no message)"
+
+
+async def _execute_step(page, step: dict, logs: list) -> None:
+    """Executes a single test plan step against a Playwright page.
+
+    Raises on failure so the caller can mark the test as failed.
+    """
+    action = step["action"]
+
+    if action == "navigate":
+        logs.append(f"[Playwright] Navigating to: {step['value']}")
+        response = await page.goto(step["value"], wait_until="domcontentloaded", timeout=15000)
+        if not response or response.status >= 400:
+            raise Exception(f"Failed to navigate. Status: {response.status if response else 'No Response'}")
+        logs.append(f"[Playwright] Navigation resolved (status code {response.status})")
+
+    elif action == "fill":
+        label = step["label"]
+        val = step["value"]
+        input_loc = page.locator(
+            f"input[placeholder*='{label}' i], input[name*='{label}' i], "
+            f"input[type='email'], input"
+        ).locator("visible=true").first
+        if await input_loc.count() > 0:
+            await input_loc.fill(val)
+            logs.append(f"[Playwright] Input fill: label '{label}' -> '{val}'")
+        else:
+            logs.append(f"[Playwright] Locator label '{label}' not found, skipping fill")
+
+    elif action == "click":
+        name = step.get("name", "")
+        btn_loc = page.locator(
+            f"button:has-text('{name}'), a:has-text('{name}'), button"
+        ).locator("visible=true").first
+        if await btn_loc.count() > 0:
+            btn_text = await btn_loc.inner_text() or name
+            await btn_loc.click()
+            logs.append(f"[Playwright] Trigger action: clicked button '{btn_text}'")
+            await page.wait_for_timeout(1000)
+        else:
+            logs.append(f"[Playwright] Locator button '{name}' not found, skipping click")
+
+    elif action == "assert_visible":
+        loc_type = step["locator_type"]
+        if loc_type == "role":
+            role_name = step["role"]
+            element_name = step["name"]
+            locator = page.get_by_role(role_name, name=element_name)
+            await expect(locator).to_be_visible(timeout=5000)
+            logs.append(f"[Playwright] Assert visible: role '{role_name}' name '{element_name}' -> True")
+        elif loc_type == "text":
+            text = step["text"]
+            locator = page.get_by_text(text)
+            await expect(locator).to_be_visible(timeout=5000)
+            logs.append(f"[Playwright] Assert visible: text '{text}' -> True")
+
+
 async def browser_execution_node(state: TestPilotState) -> Dict[str, Any]:
     """Executes generated tests in a Playwright sandbox.
 
     Supports scoped execution via tests_to_execute: when populated,
     only the listed test IDs are run (used during repair loops to
-    avoid re-running the full suite).
+    avoid re-running the full suite). Uses repaired steps from
+    the repair loop when available.
     """
     run_id = state["run_id"]
     website_url = state["website_url"]
     plan = state.get("test_plan", [])
     project_id = state["project_id"]
     tests_to_execute = state.get("tests_to_execute")
+    repaired_tests = state.get("repaired_tests") or {}
 
     # Filter scenarios to only those in scope (if scoped execution is active)
     if tests_to_execute:
         scoped_plan = []
         for scenario in plan:
-            test_id = scenario["name"].lower().replace(" ", "_").replace(":", "").strip("_")
+            test_id = _normalize_test_id(scenario["name"])
             if test_id in tests_to_execute:
                 scoped_plan.append(scenario)
         logger.info(f"[Node: browser_execution] Scoped execution: {len(scoped_plan)}/{len(plan)} tests for run {run_id}")
@@ -240,76 +318,77 @@ async def browser_execution_node(state: TestPilotState) -> Dict[str, Any]:
     except Exception as cred_err:
         logger.warning(f"[Node: browser_execution] Failed to load credentials: {cred_err}")
 
-    for scenario in scoped_plan:
-        target_url = scenario["targetUrl"]
-        test_name = scenario["name"]
-        steps = scenario.get("steps", [])
-        
-        logs = []
-        status = "passed"
-        error = None
-        start_time = time.time()
+    # Run Playwright in a ProactorEventLoop thread on Windows to avoid
+    # uvicorn's SelectorEventLoop NotImplementedError on subprocess creation.
+    async def _run_all_scenarios():
+        """Inner async function that runs inside a ProactorEventLoop thread."""
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
 
-        logs.append(f"> playwright test --spec={test_name.replace(' ', '_').lower()}.py")
-        logs.append(f"✓ [Playwright] Launching Chromium sandbox context...")
+            for scenario in scoped_plan:
+                test_name = scenario["name"]
+                test_id = _normalize_test_id(test_name)
 
-        try:
-            async with async_playwright() as p:
-                browser = await p.chromium.launch(headless=True)
-                context = await browser.new_context()
-                page = await context.new_page()
+                # Use repaired steps if the repair loop produced them
+                if test_id in repaired_tests and isinstance(repaired_tests[test_id], list):
+                    steps = repaired_tests[test_id]
+                    logger.info(f"[Node: browser_execution] Using repaired steps for '{test_id}'")
+                else:
+                    steps = scenario.get("steps", [])
 
-                for step in steps:
-                    action = step["action"]
-                    if action == "navigate":
-                        logs.append(f"⚡ [Playwright] Navigating to: {step['value']}")
-                        response = await page.goto(step["value"], wait_until="domcontentloaded", timeout=12000)
-                        if not response or response.status >= 400:
-                            raise Exception(f"Failed to navigate. Status: {response.status if response else 'No Response'}")
-                        logs.append(f"✓ [Playwright] Navigation resolved (status code {response.status})")
-                    elif action == "fill":
-                        label = step["label"]
-                        val = step["value"]
-                        # Find matching visible input field by label text, placeholder, or type
-                        input_loc = page.locator(f"input[placeholder*='{label}' i], input[name*='{label}' i], input[type='email'], input").locator("visible=true").first
-                        if await input_loc.count() > 0:
-                            await input_loc.fill(val)
-                            logs.append(f"✓ [Playwright] Input fill: label '{label}' -> '{val}'")
-                        else:
-                            logs.append(f"⚡ [Playwright] Locator label '{label}' not found, skipping fill")
-                    elif action == "click":
-                        name = step.get("name", "")
-                        # Target visible buttons matching the label
-                        btn_loc = page.locator(f"button:has-text('{name}'), a:has-text('{name}'), button").locator("visible=true").first
-                        if await btn_loc.count() > 0:
-                            btn_text = await btn_loc.inner_text() or name
-                            await btn_loc.click()
-                            logs.append(f"✓ [Playwright] Trigger action: clicked button '{btn_text}'")
-                            await page.wait_for_timeout(1000)
-                        else:
-                            logs.append(f"⚡ [Playwright] Locator button '{name}' not found, skipping click")
-                    elif action == "assert_visible":
-                        loc_type = step["locator_type"]
-                        if loc_type == "role":
-                            logs.append(f"✓ [Playwright] Assert visible: role '{step['role']}' name '{step['name']}' -> True")
-                        elif loc_type == "text":
-                            logs.append(f"✓ [Playwright] Assert visible: text '{step['text']}' -> True")
+                logs = []
+                status = "passed"
+                error = None
+                start_time = time.time()
 
-                logs.append("✓ [Playwright] All expect assertions passed successfully.")
-                await browser.close()
-        except Exception as e:
-            status = "failed"
-            error = str(e)
-            logs.append(f"✗ [Error] Exception thrown: {e}")
+                logs.append(f"> playwright test --spec={test_name.replace(' ', '_').lower()}.py")
 
-        duration_ms = int((time.time() - start_time) * 1000)
-        results.append({
-            "test_name": test_name,
-            "status": status,
-            "duration_ms": duration_ms,
-            "error": error,
-            "logs": "\n".join(logs)
-        })
+                context = None
+                try:
+                    context = await browser.new_context()
+                    page = await context.new_page()
+                    logs.append("[Playwright] Browser context created")
+
+                    for step in steps:
+                        await _execute_step(page, step, logs)
+
+                    logs.append("[Playwright] All expect assertions passed successfully.")
+                except Exception as e:
+                    status = "failed"
+                    error = _get_error_message(e)
+                    logs.append(f"[Error] Exception thrown: {error}")
+                finally:
+                    if context:
+                        try:
+                            await context.close()
+                        except Exception:
+                            pass
+
+                duration_ms = int((time.time() - start_time) * 1000)
+                results.append({
+                    "test_name": test_name,
+                    "status": status,
+                    "duration_ms": duration_ms,
+                    "error": error,
+                    "logs": "\n".join(logs)
+                })
+
+            await browser.close()
+
+    try:
+        await run_playwright(_run_all_scenarios)
+    except Exception as browser_err:
+        # Browser-level failure (e.g. Chromium not installed)
+        error_msg = _get_error_message(browser_err)
+        logger.error(f"[Node: browser_execution] Playwright browser launch failed: {error_msg}")
+        for scenario in scoped_plan:
+            results.append({
+                "test_name": scenario["name"],
+                "status": "failed",
+                "duration_ms": 0,
+                "error": f"Browser launch failed: {error_msg}",
+                "logs": f"> playwright test\n[Error] Browser launch failed: {error_msg}"
+            })
 
     passed = sum(1 for r in results if r["status"] == "passed")
     return {
@@ -383,9 +462,14 @@ async def github_pr_node(state: TestPilotState) -> Dict[str, Any]:
 
     app_bugs_msg = f" Documented {len(suspected_app_bugs)} suspected app bugs." if suspected_app_bugs else ""
 
+    # Distinguish success from partial failure
+    verdicts = [r.get("verdict") for r in evaluation_results.values()]
+    all_passed = all(v == "PASS" for v in verdicts) if verdicts else False
+    final_status = "completed" if all_passed else "completed_with_failures"
+
     return {
         "pr_url": pr_res["pr_url"],
-        "status": "completed",
+        "status": final_status,
         "messages": [{
             "role": "assistant",
             "content": f"Created PR: {pr_res['pr_url']}.{app_bugs_msg}"
