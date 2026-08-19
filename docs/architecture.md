@@ -90,22 +90,24 @@ flowchart TD
 |------|------|------|
 | `auth_check_node` | Deterministic | Pre-authenticates sessions with fail-fast verification |
 | `repo_analysis_node` | Deterministic | Clones repo, parses routes, framework config |
-| `page_inspection_node` | Deterministic (Playwright) | Extracts DOM elements + Accessibility Tree |
+| `page_inspection_node` | Deterministic (Playwright) | Extracts DOM elements + Accessibility Tree (AOM) |
 | `code_analysis_node` | Deterministic (static) | Scans source for auth, validation, API patterns |
-| `app_understanding_node` | **LLM** | Reasons about app purpose and testable features |
-| `feature_segregation_node` | **LLM** | Maps features to routes with concrete actions |
-| `test_planning_node` | **LLM** | Converts features into structured test scenarios |
-| `playwright_gen_node` | **LLM** | Generates Playwright Python test scripts |
-| `browser_execution_node` | Deterministic | Executes tests in isolated browser sandbox |
+| `app_understanding_node` | **LLM** | Reasons about app purpose, user flows, and testable features |
+| `feature_segregation_node` | **LLM** | Maps features to routes with concrete action hints |
+| `test_planning_node` | **LLM** | Generates natural language test plan with coverage priorities |
+| `playwright_gen_node` | **LLM** | Grounds natural language steps against AOM to generate execution steps & code |
+| `browser_execution_node` | Deterministic (Playwright) | Executes structured steps in isolated Chromium sandbox via `playwright_runner` |
 | `test_evaluation_node` | Deterministic + LLM fallback | Classifies results as PASS/FAIL/INCONCLUSIVE |
 | `failure_analysis_node` | **LLM** | Root cause: test defect vs. application bug |
-| `test_repair_node` | **LLM** | Repairs broken test code with bounded retries |
+| `test_repair_node` | **LLM** | Repairs broken test steps with bounded retries |
 | `inconclusive_retry_node` | Deterministic | Re-executes env-flaky tests without LLM |
 | `github_pr_node` | Deterministic | Opens PRs with test suite + bug documentation |
 | `abort_node` | Deterministic | Handles fail-fast terminations |
 
 ### Key Design Decisions
 
+- **Two-tier LLM Test Generation**: Separation of *what to test* (`test_planning_node` natural language planning) and *how to test* (`playwright_gen_node` AOM-grounded selector translation).
+- **ProactorEventLoop Thread Isolation**: `playwright_runner` delegates browser execution to a dedicated Proactor thread on Windows to avoid Uvicorn's event loop subprocess limitations.
 - **Custom merge reducers**: Per-test state fields use `Annotated[Dict, merge_dicts]` to prevent LangGraph's last-write-wins from destroying data during repair loops.
 - **Scoped re-execution**: `tests_to_execute` limits which tests run during repair cycles, avoiding full-suite reruns.
 - **Bounded repair loops**: `MAX_REPAIR_ATTEMPTS = 3` per test prevents unbounded LLM retry loops.

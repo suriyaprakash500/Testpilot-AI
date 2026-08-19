@@ -61,7 +61,8 @@ testpilot-ai/
 │   │   │   ├── models.py       # Pydantic v2 Domain Data Contracts
 │   │   │   ├── graph/          # LangGraph StateGraph Orchestration
 │   │   │   │   ├── state.py    # TestPilotState TypedDict + merge reducers
-│   │   │   │   ├── nodes.py    # Core Agent Nodes (auth, repo, exec, PR)
+│   │   │   │   ├── nodes.py    # Core Agent Nodes (planning, codegen, exec, PR)
+│   │   │   │   ├── playwright_runner.py # ProactorEventLoop thread isolation
 │   │   │   │   ├── edges.py    # Conditional Routing Functions
 │   │   │   │   ├── tools.py    # LangChain @tool Decorated Functions
 │   │   │   │   ├── pipeline.py # StateGraph Assembly & Async Invocation
@@ -89,16 +90,17 @@ testpilot-ai/
 ## Core Features
 
 * **LangGraph `StateGraph` Orchestration**: Checkpointed, stateful agent pipeline with feedback loops for test repair and retry.
-* **Feedback-Loop Test Repair**: Failed tests are evaluated, classified by root cause (selector wrong, timing issue, test assumption wrong, or application bug), and automatically repaired up to 3 times.
+* **LLM Natural Language Test Planning**: Expert QA planning agent analyzes discovered application context to produce comprehensive test plans (happy paths, validations, negative scenarios, boundary conditions, edge cases) with priority ratings (`critical`, `high`, `medium`).
+* **AOM-Grounded Playwright Code Generation**: Translates natural-language plans into concrete, structured JSON execution steps and clean Python Playwright suites grounded in live Accessibility Trees (AOM / `aria_snapshot`) and DOM elements.
+* **ProactorEventLoop Thread Isolation**: Dedicated `playwright_runner` executes browser automation in a separate Proactor thread, preventing event loop subprocess conflicts with Uvicorn on Windows.
+* **Feedback-Loop Test Repair**: Failed tests are evaluated, classified by root cause (selector wrong, timing issue, test assumption wrong, or application bug), and automatically repaired up to 3 times with structured step updates.
 * **Application Bug Detection**: Tests classified as application bugs are documented in the PR body with evidence — the system never weakens assertions to mask real defects.
 * **Deterministic Environment Retry**: Inconclusive tests (DNS, timeout, service down) are retried without LLM invocation, saving tokens and eliminating hallucination.
 * **Custom Merge Reducers**: Per-test state fields use `Annotated` types with `merge_dicts` reducers to prevent LangGraph's last-write-wins from corrupting data during repair loops.
 * **Scoped Re-execution**: During repair cycles, only repaired tests are re-run — passing tests are preserved via the merge reducer.
 * **Live Page Inspection**: Scans active website DOM trees and extracts the Playwright Accessibility Tree (AOM) for semantic element discovery.
 * **Code Static Analysis**: Analyzes frameworks, routing files, schema validation, API requests, and state management patterns.
-* **QA Reasoning Engine**: Cross-validates live DOM elements against code patterns to build business behavior profiles.
-* **Resilient Playwright Generation**: Produces clean assertions using role-based / label-based selectors instead of fragile CSS selectors.
-* **Sandboxed Browser Execution**: Runs tests in isolated Chromium contexts with full log capture.
+* **Centralized LLM Configuration**: Configurable Groq model (`openai/gpt-oss-120b` default) powering reasoning across planning, generation, analysis, and repair.
 * **GitHub PR Integration**: Submits PRs with test results summary, auto-repair report, and suspected application bug documentation.
 
 ---
