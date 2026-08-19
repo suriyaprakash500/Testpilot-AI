@@ -74,7 +74,7 @@ async def _llm_segregate_features(prompt_context: str) -> Dict[str, List[Dict[st
     import json
 
     llm = ChatGroq(
-        model="llama-3.3-70b-versatile",
+        model=settings.groq_model,
         api_key=settings.groq_api_key,
         temperature=0.2,
     )

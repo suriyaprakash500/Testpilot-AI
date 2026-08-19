@@ -148,6 +148,7 @@ async def run_pipeline(
         "code_analysis": None,
         "app_understanding": None,
         "features": None,
+        "test_plan_doc": None,
         "test_plan": None,
         "generated_tests": None,
         "execution_results": None,

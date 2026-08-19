@@ -101,7 +101,7 @@ async def _llm_analyze_failure(context: str) -> Dict[str, Any]:
     from langchain_groq import ChatGroq
 
     llm = ChatGroq(
-        model="llama-3.3-70b-versatile",
+        model=settings.groq_model,
         api_key=settings.groq_api_key,
         temperature=0.1,
     )

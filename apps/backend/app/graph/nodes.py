@@ -1,8 +1,10 @@
 import logging
 import uuid
 import time
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
+import json
 from app.graph.state import TestPilotState
+from app.config import settings
 from app.graph.tools import (
     analyze_repo_structure,
     inspect_dom_elements,
@@ -64,141 +66,648 @@ async def repo_analysis_node(state: TestPilotState) -> Dict[str, Any]:
     }
 
 
-async def test_planning_node(state: TestPilotState) -> Dict[str, Any]:
-    """Agent: Converts feature-grouped test actions into structured test scenarios."""
-    run_id = state["run_id"]
-    website_url = state["website_url"]
-    features = state.get("features") or {}
+def _build_test_planning_evidence(
+    understanding: dict,
+    features: dict,
+    inspections: list,
+    code_info: dict,
+    repo_info: dict,
+    website_url: str,
+) -> str:
+    """Assembles all application discoveries into structured evidence for QA test planning."""
+    lines = []
+    lines.append(f"Target Website: {website_url}")
+    lines.append(f"Application Name: {understanding.get('app_name', 'Web Application')}")
+    lines.append(f"Application Type: {understanding.get('app_type', 'unknown')}")
+    if understanding.get("purpose"):
+        lines.append(f"Purpose: {understanding.get('purpose')}")
 
-    logger.info(f"[Node: test_planning] Planning tests from {len(features)} feature groups")
+    testable_features = understanding.get("testable_features", [])
+    if testable_features:
+        lines.append("\nIdentified High-Level Features:")
+        for tf in testable_features:
+            lines.append(f"  - {tf.get('name')} (importance: {tf.get('importance', 'medium')}): {tf.get('evidence', '')}")
 
-    plan = []
-    idx = 1
+    user_flows = understanding.get("user_flows", [])
+    if user_flows:
+        lines.append("\nKey User Workflows:")
+        for flow in user_flows:
+            lines.append(f"  - {flow}")
 
-    for feature_name, route_entries in features.items():
-        for entry in route_entries:
+    if features:
+        lines.append("\nFeature Segregation & Route Groups:")
+        for feat_name, route_entries in features.items():
+            lines.append(f"  * Feature Area: {feat_name}")
+            for entry in route_entries:
+                route = entry.get("route", "/")
+                page_type = entry.get("page_type", "unknown")
+                actions = entry.get("test_actions", [])
+                lines.append(f"    - Route: {route} (type: {page_type})")
+                for act in actions:
+                    lines.append(f"      • Action hint: {act.get('description', '')} on {act.get('element_type', 'element')} '{act.get('element_identifier', '')}'")
+
+    if inspections:
+        lines.append("\nDiscovered Live Page Inspections & Elements:")
+        for insp in inspections:
+            route = insp.get("route", "/")
+            page_type = insp.get("page_type", "unknown")
+            title = insp.get("title", "")
+            headings = [h.get("text", "") for h in insp.get("headings", []) if h.get("text")]
+            buttons = [b.get("text", "") for b in insp.get("buttons", []) if b.get("text")]
+            inputs = []
+            for inp in insp.get("inputs", []):
+                lbl = inp.get("label") or inp.get("placeholder") or inp.get("name") or inp.get("type", "")
+                if lbl:
+                    inputs.append(f"{lbl} ({inp.get('type', 'text')})")
+            links = [l.get("text", "") for l in insp.get("links", []) if l.get("text")][:10]
+            forms = len(insp.get("forms", []))
+            tables = len(insp.get("tables", []))
+            cards = len(insp.get("cards", []))
+
+            lines.append(f"  * Route '{route}' (title: '{title}', type: {page_type}):")
+            if headings:
+                lines.append(f"      Headings: {headings[:8]}")
+            if buttons:
+                lines.append(f"      Buttons: {buttons[:12]}")
+            if inputs:
+                lines.append(f"      Inputs: {inputs[:10]}")
+            if links:
+                lines.append(f"      Links: {links}")
+            if forms:
+                lines.append(f"      Forms count: {forms}")
+            if tables:
+                lines.append(f"      Tables count: {tables}")
+            if cards:
+                lines.append(f"      Cards count: {cards}")
+
+    if code_info:
+        comps = code_info.get("components", [])
+        apis = code_info.get("api_endpoints", [])
+        if comps:
+            lines.append(f"\nDiscovered Source Components: {comps[:15]}")
+        if apis:
+            lines.append(f"Discovered API Endpoints: {apis[:10]}")
+
+    return "\n".join(lines)
+
+
+async def _llm_generate_test_plan(evidence_text: str) -> Optional[dict]:
+    """Calls Groq LLM with expert QA Test Planning prompt to output natural language plans."""
+    from langchain_groq import ChatGroq
+
+    llm = ChatGroq(
+        model=settings.groq_model,
+        api_key=settings.groq_api_key,
+        temperature=0.2,
+    )
+
+    prompt = f"""You are an expert QA Test Planning Agent in an autonomous web application testing system.
+
+Your responsibility is to analyze the discovered application information and produce a COMPREHENSIVE, STRUCTURED test plan.
+
+You are NOT responsible for writing Playwright code.
+You are NOT responsible for executing tests.
+Your job is to determine WHAT should be tested.
+
+## OBJECTIVE
+
+For every discovered feature, identify meaningful test scenarios that provide useful functional coverage.
+
+Do NOT assume that one feature requires only one test.
+
+A single feature may require multiple scenarios covering:
+- Happy paths
+- Alternative valid workflows
+- Negative scenarios
+- Input validation
+- Boundary conditions
+- Error handling
+- Navigation
+- UI state changes
+- Important user interactions
+- Empty states
+- Loading states
+- Authentication/authorization behavior where applicable
+- CRUD operations where applicable
+
+## IMPORTANT RULES
+
+1. Analyze the provided application evidence carefully.
+2. Do not invent UI elements, routes, workflows, or behavior that are not supported by the evidence.
+3. Use discovered routes, components, elements, actions, source code, and application behavior as evidence.
+4. Generate multiple scenarios when the feature contains multiple meaningful interactions.
+5. Do NOT generate trivial variations merely to increase the number of tests.
+6. Do NOT generate only a page-load test when the page contains meaningful interactive functionality.
+7. Every important interactive element should be considered for testing.
+8. Include both positive and negative scenarios when the application's behavior supports them.
+9. Prefer end-to-end user workflows over isolated implementation details.
+10. Avoid duplicate scenarios.
+11. Prioritize scenarios based on business/user impact.
+12. If the available evidence is insufficient to determine a scenario, do not invent it.
+13. Each scenario must be independently executable and testable.
+14. Keep scenarios atomic: one clear objective per scenario.
+15. Include appropriate assertions that can verify the expected outcome.
+16. Consider dependencies between actions, but do not combine unrelated behaviors into one test.
+
+## COVERAGE EXPECTATIONS
+
+For each feature, inspect the available evidence and ask:
+- What can the user do?
+- What can the user input?
+- What can the user click?
+- What can the user navigate to?
+- What successful outcomes are possible?
+- What invalid inputs are possible?
+- What failure/error states are visible?
+- What state changes occur?
+- What important workflows exist?
+- What important edge cases are supported by the evidence?
+
+For interactive features, aim for meaningful coverage rather than a single smoke test.
+
+## PRIORITY
+
+Assign each scenario:
+- critical: Core functionality whose failure makes the feature unusable.
+- high: Important functionality commonly used by users.
+- medium: Secondary functionality or important edge cases.
+- low: Minor or less frequently used behavior.
+
+## SCENARIO TYPES
+
+Use one of:
+- smoke
+- positive
+- negative
+- validation
+- navigation
+- edge_case
+- error_handling
+- state_change
+- accessibility
+
+Only use a type when supported by the discovered evidence.
+
+=== APPLICATION EVIDENCE ===
+{evidence_text}
+=== END EVIDENCE ===
+
+## OUTPUT
+
+Return ONLY valid JSON matching this structure:
+
+{{
+  "test_plan": [
+    {{
+      "feature": "Feature name",
+      "scenarios": [
+        {{
+          "id": "TC-001",
+          "name": "Short descriptive scenario name",
+          "route": "/",
+          "description": "What the user is trying to verify",
+          "type": "positive",
+          "priority": "high",
+          "preconditions": [
+            "Required condition"
+          ],
+          "steps": [
+            "User action 1",
+            "User action 2"
+          ],
+          "expected_result": "Observable expected behavior",
+          "assertions": [
+            "Specific assertion that should be verified"
+          ],
+          "evidence": [
+            "Relevant discovered route/component/action/source evidence"
+          ]
+        }}
+      ]
+    }}
+  ],
+  "coverage_summary": {{
+    "features_analyzed": 0,
+    "scenarios_generated": 0,
+    "coverage_gaps": [],
+    "notes": []
+  }}
+}}
+
+The scenario count must reflect the actual scenarios generated.
+Do not output Markdown fences or explanations outside the JSON."""
+
+    response = await llm.ainvoke(prompt)
+    content = response.content.strip()
+
+    if content.startswith("```"):
+        content = content.split("\n", 1)[1]
+        if content.endswith("```"):
+            content = content.rsplit("```", 1)[0]
+        content = content.strip()
+
+    try:
+        data = json.loads(content)
+        if isinstance(data, dict) and "test_plan" in data and isinstance(data["test_plan"], list):
+            return data
+        logger.warning(f"[Node: test_planning] LLM returned JSON without 'test_plan' key: {content[:200]}")
+        return None
+    except json.JSONDecodeError as err:
+        logger.warning(f"[Node: test_planning] LLM returned invalid JSON: {err}. Raw: {content[:300]}")
+        return None
+
+
+def _fallback_test_planning(features: dict, website_url: str) -> dict:
+    """Fallback rule-based test planner when LLM is unavailable."""
+    plan_features = []
+    total_scenarios = 0
+
+    for feature_name, route_entries in (features or {}).items():
+        scenarios = []
+        for idx, entry in enumerate(route_entries, 1):
             route = entry.get("route", "/")
             page_type = entry.get("page_type", "unknown")
-            test_actions = entry.get("test_actions", [])
-            target_url = f"{website_url.rstrip('/')}{route}" if route != "/" else website_url
+            actions = entry.get("test_actions", [])
+            steps = [f"Navigate to {route}"]
+            for act in actions:
+                steps.append(f"{act.get('action', 'interact')} with {act.get('element_type', 'element')} '{act.get('element_identifier', '')}'")
 
-            if not test_actions:
-                # Minimal navigation test if no actions defined
-                plan.append({
-                    "id": f"scenario-{idx}",
-                    "feature": feature_name,
-                    "name": f"{feature_name}: Load {route}",
-                    "description": f"Verifies page at {route} loads successfully.",
-                    "targetUrl": target_url,
-                    "steps": [
-                        {"action": "navigate", "value": target_url},
-                        {"action": "assert_visible", "locator_type": "role", "role": "heading", "name": feature_name}
-                    ]
-                })
-                idx += 1
-                continue
-
-            # Convert test_actions into plan steps
-            steps = [{"action": "navigate", "value": target_url}]
-            description_parts = []
-
-            for ta in test_actions:
-                action = ta.get("action", "assert_visible")
-                element_type = ta.get("element_type", "text")
-                identifier = ta.get("element_identifier", "")
-                desc = ta.get("description", "")
-
-                if desc:
-                    description_parts.append(desc)
-
-                if action == "navigate":
-                    # Already added at the top
-                    continue
-                elif action == "click":
-                    role = "button" if element_type == "button" else "link" if element_type == "link" else "button"
-                    steps.append({"action": "click", "role": role, "name": identifier})
-                elif action == "fill":
-                    steps.append({"action": "fill", "label": identifier, "value": "test@testpilot.ai"})
-                elif action in ("assert_visible", "assert_text"):
-                    if element_type == "heading":
-                        steps.append({"action": "assert_visible", "locator_type": "role", "role": "heading", "name": identifier})
-                    else:
-                        steps.append({"action": "assert_visible", "locator_type": "text", "text": identifier})
-
-            scenario_name = f"{feature_name}: {description_parts[0]}" if description_parts else f"{feature_name}: Verify {route}"
-
-            plan.append({
-                "id": f"scenario-{idx}",
-                "feature": feature_name,
-                "name": scenario_name[:80],
-                "description": "; ".join(description_parts[:3]) if description_parts else f"Verifies {feature_name} on {route}.",
-                "targetUrl": target_url,
-                "steps": steps
+            scenarios.append({
+                "id": f"TC-{len(plan_features)+1:02d}{idx:02d}",
+                "name": f"{feature_name}: Verify {route}",
+                "route": route,
+                "description": f"Verifies core functionality on {route} for {feature_name}.",
+                "type": "positive",
+                "priority": "high",
+                "preconditions": [f"Website accessible at {website_url}"],
+                "steps": steps,
+                "expected_result": f"{feature_name} elements are visible and interactive.",
+                "assertions": [f"Verify heading or primary button visible for {feature_name}"],
+                "evidence": [f"Route: {route}, Page Type: {page_type}"]
             })
-            idx += 1
+            total_scenarios += 1
+
+        if scenarios:
+            plan_features.append({
+                "feature": feature_name,
+                "scenarios": scenarios
+            })
+
+    if not plan_features:
+        plan_features.append({
+            "feature": "Application Smoke Test",
+            "scenarios": [{
+                "id": "TC-01",
+                "name": "Navigate to landing page",
+                "route": "/",
+                "description": "Verifies that landing page loads successfully.",
+                "type": "smoke",
+                "priority": "critical",
+                "preconditions": [f"Website accessible at {website_url}"],
+                "steps": ["Navigate to /", "Verify page title and main heading"],
+                "expected_result": "Landing page renders successfully.",
+                "assertions": ["Main page is visible"],
+                "evidence": ["Route: /"]
+            }]
+        })
+        total_scenarios = 1
 
     return {
-        "test_plan": plan,
-        "status": "generating",
-        "messages": [{"role": "assistant", "content": f"QA Planner designed {len(plan)} test scenarios from {len(features)} features."}]
+        "test_plan": plan_features,
+        "coverage_summary": {
+            "features_analyzed": len(plan_features),
+            "scenarios_generated": total_scenarios,
+            "coverage_gaps": [],
+            "notes": ["Generated via fallback rule-based planner."]
+        }
     }
 
 
+async def test_planning_node(state: TestPilotState) -> Dict[str, Any]:
+    """Agent: Generates comprehensive natural language QA test plans using LLM reasoning."""
+    run_id = state["run_id"]
+    website_url = state["website_url"]
+    features = state.get("features") or {}
+    inspections = state.get("page_inspections") or []
+    understanding = state.get("app_understanding") or {}
+    code_info = state.get("code_analysis") or {}
+    repo_info = state.get("repo_analysis") or {}
+
+    logger.info(f"[Node: test_planning] Designing natural language test plan for run {run_id}")
+
+    evidence_text = _build_test_planning_evidence(
+        understanding, features, inspections, code_info, repo_info, website_url
+    )
+
+    plan_doc = None
+    try:
+        plan_doc = await _llm_generate_test_plan(evidence_text)
+    except Exception as llm_err:
+        logger.warning(f"[Node: test_planning] LLM test planning call failed: {llm_err}")
+
+    if not plan_doc or not plan_doc.get("test_plan"):
+        logger.info("[Node: test_planning] Using fallback rule-based test planning")
+        plan_doc = _fallback_test_planning(features, website_url)
+
+    # Flatten hierarchical plan into state["test_plan"] scenario list for downstream execution
+    flattened_scenarios = []
+    idx = 1
+    for feat_entry in plan_doc.get("test_plan", []):
+        feat_name = feat_entry.get("feature", "General")
+        for sc in feat_entry.get("scenarios", []):
+            sc_id = sc.get("id") or f"scenario-{idx}"
+            target_route = sc.get("route") or "/"
+            target_url = f"{website_url.rstrip('/')}{target_route}" if target_route != "/" else website_url
+
+            flattened_scenarios.append({
+                "id": sc_id,
+                "feature": feat_name,
+                "name": sc.get("name", f"{feat_name} Test {idx}"),
+                "route": target_route,
+                "targetUrl": target_url,
+                "description": sc.get("description", ""),
+                "type": sc.get("type", "positive"),
+                "priority": sc.get("priority", "high"),
+                "preconditions": sc.get("preconditions", []),
+                "natural_steps": sc.get("steps", []),
+                "expected_result": sc.get("expected_result", ""),
+                "assertions": sc.get("assertions", []),
+                "evidence": sc.get("evidence", []),
+                "steps": []  # Populated by playwright_gen_node
+            })
+            idx += 1
+
+    summary = plan_doc.get("coverage_summary", {})
+    scenarios_count = len(flattened_scenarios)
+    logger.info(f"[Node: test_planning] Planned {scenarios_count} scenarios across {len(plan_doc.get('test_plan', []))} features")
+
+    return {
+        "test_plan_doc": plan_doc,
+        "test_plan": flattened_scenarios,
+        "status": "generating",
+        "messages": [{
+            "role": "assistant",
+            "content": f"QA Planner designed {scenarios_count} scenarios across {len(plan_doc.get('test_plan', []))} feature areas."
+        }]
+    }
+
+
+def _build_aom_and_inspections_context(inspections: list, website_url: str) -> str:
+    """Builds rich context with Accessibility Tree (AOM) snapshots and element selectors for code generation."""
+    lines = []
+    for insp in (inspections or []):
+        route = insp.get("route", "/")
+        target_url = f"{website_url.rstrip('/')}{route}" if route != "/" else website_url
+        page_type = insp.get("page_type", "unknown")
+        title = insp.get("title", "")
+
+        lines.append(f"\n=======================================================")
+        lines.append(f"ROUTE: {route} ({target_url}) | Type: {page_type} | Title: '{title}'")
+        lines.append(f"=======================================================")
+
+        # Accessibility Tree (AOM)
+        aom = insp.get("accessibility_tree", "")
+        if aom:
+            lines.append("ACCESSIBILITY TREE (AOM) SNAPSHOT:")
+            lines.append(aom[:3000])
+
+        # Discovered elements
+        headings = [h.get("text", "") for h in insp.get("headings", []) if h.get("text")]
+        if headings:
+            lines.append(f"\nVisible Headings: {headings}")
+
+        buttons = [b.get("text", "") for b in insp.get("buttons", []) if b.get("text")]
+        if buttons:
+            lines.append(f"Buttons / Clickable Roles: {buttons}")
+
+        inputs = []
+        for inp in insp.get("inputs", []):
+            label = inp.get("label") or inp.get("placeholder") or inp.get("name") or inp.get("type", "")
+            if label:
+                inputs.append(f"label/placeholder: '{label}', type: '{inp.get('type', 'text')}'")
+        if inputs:
+            lines.append(f"Input Fields: {inputs}")
+
+        links = [l.get("text", "") for l in insp.get("links", []) if l.get("text")][:10]
+        if links:
+            lines.append(f"Navigation Links: {links}")
+
+    return "\n".join(lines)
+
+
+async def _llm_generate_playwright_steps(
+    scenarios: list, inspections_context: str, website_url: str
+) -> Optional[dict]:
+    """Calls Groq LLM to ground natural language scenarios into executable JSON steps and Playwright code."""
+    from langchain_groq import ChatGroq
+
+    llm = ChatGroq(
+        model=settings.groq_model,
+        api_key=settings.groq_api_key,
+        temperature=0.1,
+    )
+
+    scenarios_input = []
+    for sc in scenarios:
+        scenarios_input.append({
+            "id": sc.get("id"),
+            "name": sc.get("name"),
+            "feature": sc.get("feature"),
+            "route": sc.get("route", "/"),
+            "targetUrl": sc.get("targetUrl", website_url),
+            "description": sc.get("description", ""),
+            "natural_steps": sc.get("natural_steps", []),
+            "expected_result": sc.get("expected_result", ""),
+            "assertions": sc.get("assertions", []),
+        })
+
+    scenarios_json = json.dumps(scenarios_input, indent=2)
+
+    prompt = f"""You are a senior Playwright automation engineer.
+Your task is to translate natural language test scenarios into concrete, executable Playwright step definitions and clean Python Playwright code.
+
+=== TARGET APPLICATION BASE URL ===
+{website_url}
+
+=== AVAILABLE PAGE INSPECTIONS & ACCESSIBILITY TREES (AOM) ===
+{inspections_context}
+
+=== TEST SCENARIOS TO TRANSLATE ===
+{scenarios_json}
+
+=== TRANSLATION RULES ===
+1. For each scenario, translate the natural language steps and assertions into concrete executable JSON steps using the exact interactive elements found in the Accessibility Trees and Page Inspections.
+2. Step actions MUST be one of:
+   - Navigate: {{"action": "navigate", "value": "https://..."}}
+   - Click: {{"action": "click", "role": "button" | "link", "name": "Exact text or aria-label from AOM/page"}}
+   - Fill: {{"action": "fill", "label": "Exact input placeholder/label/name from page", "value": "value to type"}}
+   - Assert visible by role: {{"action": "assert_visible", "locator_type": "role", "role": "heading" | "button" | "link", "name": "Exact element name"}}
+   - Assert visible by text: {{"action": "assert_visible", "locator_type": "text", "text": "Exact visible text"}}
+3. ONLY use element names, labels, and roles that exist in the Accessibility Tree (AOM) or page inspection evidence. Do NOT invent selectors.
+4. Each scenario MUST begin with a "navigate" step to the target URL.
+5. Each scenario MUST end with at least one "assert_visible" verification.
+6. Also write the complete Python Playwright test function code using `@pytest.mark.asyncio`, `async def test_...(page: Page):`, `await page.goto(...)`, `await page.get_by_role(...).click()`, `await page.get_by_label(...).fill(...)`, and `await expect(...).to_be_visible()`.
+
+=== OUTPUT FORMAT ===
+Return ONLY a valid JSON object matching:
+{{
+  "scenarios": [
+    {{
+      "id": "scenario id",
+      "steps": [
+        {{"action": "navigate", "value": "{website_url}"}},
+        {{"action": "click", "role": "button", "name": "Button Text"}},
+        {{"action": "assert_visible", "locator_type": "role", "role": "heading", "name": "Heading Text"}}
+      ],
+      "code": "@pytest.mark.asyncio\\nasync def test_example(page: Page):\\n    await page.goto('{website_url}')\\n    await page.get_by_role('button', name='Button Text').click()\\n    await expect(page.get_by_role('heading', name='Heading Text')).to_be_visible()\\n"
+    }}
+  ]
+}}
+
+Do not include Markdown formatting or commentary outside the JSON."""
+
+    response = await llm.ainvoke(prompt)
+    content = response.content.strip()
+
+    if content.startswith("```"):
+        content = content.split("\n", 1)[1]
+        if content.endswith("```"):
+            content = content.rsplit("```", 1)[0]
+        content = content.strip()
+
+    try:
+        data = json.loads(content)
+        if isinstance(data, dict) and "scenarios" in data and isinstance(data["scenarios"], list):
+            return data
+        logger.warning(f"[Node: playwright_gen] LLM returned non-matching structure: {content[:200]}")
+        return None
+    except json.JSONDecodeError as err:
+        logger.warning(f"[Node: playwright_gen] LLM returned invalid JSON: {err}. Raw: {content[:300]}")
+        return None
+
+
+def _fallback_playwright_steps(scenario: dict, website_url: str, inspections: list) -> list:
+    """Fallback step generator when LLM translation is unavailable."""
+    target_url = scenario.get("targetUrl") or website_url
+    steps = [{"action": "navigate", "value": target_url}]
+
+    # Match target inspection
+    route = scenario.get("route", "/")
+    matching_insp = next((i for i in inspections if i.get("route") == route), None)
+
+    if matching_insp:
+        buttons = [b.get("text") for b in matching_insp.get("buttons", []) if b.get("text")]
+        inputs = [i.get("label") or i.get("placeholder") or i.get("name") for i in matching_insp.get("inputs", []) if i.get("label") or i.get("placeholder") or i.get("name")]
+        headings = [h.get("text") for h in matching_insp.get("headings", []) if h.get("text")]
+
+        if inputs:
+            steps.append({"action": "fill", "label": inputs[0], "value": "test@testpilot.ai"})
+        if buttons:
+            steps.append({"action": "click", "role": "button", "name": buttons[0]})
+        if headings:
+            steps.append({"action": "assert_visible", "locator_type": "role", "role": "heading", "name": headings[0]})
+        else:
+            steps.append({"action": "assert_visible", "locator_type": "text", "text": matching_insp.get("title", "App")})
+    else:
+        steps.append({"action": "assert_visible", "locator_type": "text", "text": scenario.get("feature", "Home")})
+
+    return steps
+
 
 async def playwright_gen_node(state: TestPilotState) -> Dict[str, Any]:
-    """Agent: Generates clean, robust Playwright Python scripts using role/label selectors."""
+    """Agent: LLM-powered node that grounds natural language plans against AOM trees to generate steps & code."""
     run_id = state["run_id"]
+    website_url = state["website_url"]
     plan = state.get("test_plan", [])
+    inspections = state.get("page_inspections") or []
 
-    logger.info(f"[Node: playwright_gen] Generating test suite from {len(plan)} scenarios")
+    logger.info(f"[Node: playwright_gen] Generating executable Playwright steps and code for {len(plan)} scenarios")
+
+    inspections_context = _build_aom_and_inspections_context(inspections, website_url)
+
+    llm_result = None
+    try:
+        llm_result = await _llm_generate_playwright_steps(plan, inspections_context, website_url)
+    except Exception as e:
+        logger.warning(f"[Node: playwright_gen] LLM step generation failed: {e}")
+
+    # Map LLM results by scenario ID
+    llm_scenarios_map = {}
+    if llm_result and "scenarios" in llm_result:
+        for sc_out in llm_result["scenarios"]:
+            sc_id = sc_out.get("id")
+            if sc_id:
+                llm_scenarios_map[sc_id] = sc_out
 
     test_functions = []
+    updated_plan = []
+
     for scenario in plan:
-        fn_suffix = scenario["name"].lower().replace(":", "").replace("&", "and").replace("-", "_").replace(" ", "_").strip("_")
-        fn_name = f"test_{fn_suffix}"
-        steps = scenario.get("steps", [])
+        sc_id = scenario.get("id")
+        sc_llm = llm_scenarios_map.get(sc_id)
 
-        step_codes = []
-        for step in steps:
-            action = step["action"]
-            if action == "navigate":
-                step_codes.append(f'    await page.goto("{step["value"]}")')
-            elif action == "fill":
-                step_codes.append(f'    await page.get_by_label("{step["label"]}").fill("{step["value"]}")')
-            elif action == "click":
-                role = step.get("role", "button")
-                step_codes.append(f'    await page.get_by_role("{role}", name="{step["name"]}").click()')
-            elif action == "assert_visible":
-                loc_type = step["locator_type"]
-                if loc_type == "role":
-                    step_codes.append(f'    await expect(page.get_by_role("{step["role"]}", name="{step["name"]}")).to_be_visible()')
-                elif loc_type == "text":
-                    step_codes.append(f'    await expect(page.get_by_text("{step["text"]}")).to_be_visible()')
+        if sc_llm and sc_llm.get("steps") and isinstance(sc_llm["steps"], list) and len(sc_llm["steps"]) > 0:
+            resolved_steps = sc_llm["steps"]
+            test_code = sc_llm.get("code")
+        else:
+            resolved_steps = _fallback_playwright_steps(scenario, website_url, inspections)
+            test_code = None
 
-        test_functions.append(
-            f"@pytest.mark.asyncio\n"
-            f"async def {fn_name}(page: Page):\n"
-            + "\n".join(step_codes)
-            + "\n"
-        )
+        scenario_copy = {**scenario, "steps": resolved_steps}
+        updated_plan.append(scenario_copy)
 
-    generated_code = (
+        # Generate python test code if not provided by LLM
+        if not test_code:
+            fn_suffix = scenario["name"].lower().replace(":", "").replace("&", "and").replace("-", "_").replace(" ", "_").strip("_")
+            fn_name = f"test_{fn_suffix}"
+            step_codes = []
+            for step in resolved_steps:
+                action = step.get("action")
+                if action == "navigate":
+                    step_codes.append(f'    await page.goto("{step["value"]}")')
+                elif action == "fill":
+                    step_codes.append(f'    await page.get_by_label("{step.get("label", "")}").fill("{step.get("value", "")}")')
+                elif action == "click":
+                    role = step.get("role", "button")
+                    step_codes.append(f'    await page.get_by_role("{role}", name="{step.get("name", "")}").click()')
+                elif action == "assert_visible":
+                    loc_type = step.get("locator_type", "text")
+                    if loc_type == "role":
+                        step_codes.append(f'    await expect(page.get_by_role("{step.get("role", "heading")}", name="{step.get("name", "")}")).to_be_visible()')
+                    else:
+                        step_codes.append(f'    await expect(page.get_by_text("{step.get("text", "")}")).to_be_visible()')
+
+            test_code = (
+                f"@pytest.mark.asyncio\n"
+                f"async def {fn_name}(page: Page):\n"
+                + "\n".join(step_codes)
+                + "\n"
+            )
+
+        test_functions.append(test_code)
+
+    generated_suite = (
         "import re\nimport pytest\nfrom playwright.async_api import Page, expect\n\n"
-        + "\n".join(test_functions)
+        + "\n\n".join(test_functions)
+        + "\n"
     )
 
     generated = [
         {
             "name": "testpilot_e2e_suite.spec.py",
-            "code": generated_code,
-            "scenariosCount": len(plan)
+            "code": generated_suite,
+            "scenariosCount": len(updated_plan)
         }
     ]
 
     return {
+        "test_plan": updated_plan,
         "generated_tests": generated,
         "status": "executing",
-        "messages": [{"role": "assistant", "content": "Clean role-based E2E Playwright suite successfully written."}]
+        "messages": [{
+            "role": "assistant",
+            "content": f"AOM-grounded Playwright test suite written ({len(updated_plan)} scenarios)."
+        }]
     }
 
 

@@ -32,6 +32,7 @@ class TestPilotState(TypedDict):
     code_analysis: Optional[Dict[str, Any]]
     app_understanding: Optional[Dict[str, Any]]
     features: Optional[Dict[str, Any]]
+    test_plan_doc: Optional[Dict[str, Any]]
     test_plan: Optional[List[Dict[str, Any]]]
     generated_tests: Optional[List[Dict[str, Any]]]
     execution_results: Optional[List[Dict[str, Any]]]
