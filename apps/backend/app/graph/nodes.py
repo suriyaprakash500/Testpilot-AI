@@ -547,10 +547,12 @@ Your task is to translate natural language test scenarios into concrete, executa
    If an element's name or text is likely to appear multiple times on the page (like 'Buy Now', 'Read More', 'View Certificate', or 'Download' in a list of cards/items), you MUST either:
    - Chain the locator to a unique parent container (e.g. `page.locator(".project-card").filter(has_text="Project Alpha").get_by_role("button", name="View Certificate").first.click()`)
    - OR use `.first` / `.nth(index)` (e.g. `page.get_by_role("button", name="View Certificate").first.click()` or `page.get_by_text("View Certificate").first`) to avoid Playwright strict mode violations.
-4. ONLY use element names, labels, and roles that exist in the Accessibility Tree (AOM) or page inspection evidence. Do NOT invent selectors.
-5. Each scenario MUST begin with a "navigate" step to the target URL.
-6. Each scenario MUST end with at least one "assert_visible" verification.
-7. Also write the complete Python Playwright test function code using `@pytest.mark.asyncio`, `async def test_...(page: Page):`, `await page.goto(...)`, `await page.get_by_role(...).first.click()`, `await page.get_by_label(...).fill(...)`, and `await expect(...).to_be_visible()`.
+4. TEXT ASSERTIONS & SEMANTIC ROLES:
+   When asserting that specific content or text is visible on the page, prefer using semantic roles (e.g., `get_by_role('heading', name='Text')`, `get_by_role('button', name='Text')`) instead of generic `get_by_text()`. If you must use `get_by_text()`, scope it to a parent container (like a specific section, header, or footer) or append `.first` / set `"first": true` to avoid matching multiple stray elements across the page.
+5. ONLY use element names, labels, and roles that exist in the Accessibility Tree (AOM) or page inspection evidence. Do NOT invent selectors.
+6. Each scenario MUST begin with a "navigate" step to the target URL.
+7. Each scenario MUST end with at least one "assert_visible" verification.
+8. Also write the complete Python Playwright test function code using `@pytest.mark.asyncio`, `async def test_...(page: Page):`, `await page.goto(...)`, `await page.get_by_role(...).first.click()`, `await page.get_by_label(...).fill(...)`, and `await expect(...).to_be_visible()`.
 
 === OUTPUT FORMAT ===
 Return ONLY a valid JSON object matching:
@@ -789,16 +791,22 @@ async def _execute_step(page, step: dict, logs: list) -> None:
         if await btn_loc.count() == 0 and name:
             btn_loc = base.locator(f"button:has-text('{name}'), a:has-text('{name}'), [role='button']:has-text('{name}')")
 
-        # Handle multiple matching elements (strict mode prevention)
-        if step.get("nth") is not None:
-            btn_loc = btn_loc.nth(step["nth"])
-        else:
-            btn_loc = btn_loc.first
+        total_matches = await btn_loc.count()
+        if total_matches > 0:
+            if step.get("nth") is not None:
+                nth_idx = step["nth"]
+                target_loc = btn_loc.nth(nth_idx)
+                match_note = f" (index {nth_idx} of {total_matches} matches)"
+            elif total_matches > 1:
+                target_loc = btn_loc.first
+                match_note = f" (first of {total_matches} matches)"
+            else:
+                target_loc = btn_loc.first
+                match_note = ""
 
-        if await btn_loc.count() > 0:
-            btn_text = (await btn_loc.inner_text()).strip() or name
-            await btn_loc.click()
-            logs.append(f"[Playwright] Trigger action: clicked {role} '{btn_text}'")
+            btn_text = (await target_loc.inner_text()).strip() or name
+            await target_loc.click()
+            logs.append(f"[Playwright] Trigger action: clicked {role} '{btn_text}'{match_note}")
             await page.wait_for_timeout(1000)
         else:
             logs.append(f"[Playwright] Locator {role} '{name}' not found, skipping click")
@@ -823,14 +831,18 @@ async def _execute_step(page, step: dict, logs: list) -> None:
             text = step.get("text", "")
             locator = base.get_by_text(text)
 
-        # Scoping to prevent strict mode errors when text appears multiple times
+        # Unconditionally narrow with .first or .nth before wrapping in expect() to prevent strict mode violation
         if step.get("nth") is not None:
-            locator = locator.nth(step["nth"])
+            nth_idx = step["nth"]
+            target_loc = locator.nth(nth_idx)
+            match_note = f" (index {nth_idx})"
         else:
-            locator = locator.first
+            target_loc = locator.first
+            match_note = ""
 
-        await expect(locator).to_be_visible(timeout=5000)
-        logs.append(f"[Playwright] Assert visible: {loc_type} '{step.get('name') or step.get('text')}' -> True")
+        await expect(target_loc).to_be_visible(timeout=5000)
+        element_label = step.get('name') or step.get('text')
+        logs.append(f"[Playwright] Assert visible: {loc_type} '{element_label}' -> True{match_note}")
 
 
 async def browser_execution_node(state: TestPilotState) -> Dict[str, Any]:
