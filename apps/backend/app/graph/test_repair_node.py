@@ -137,16 +137,17 @@ REPAIR STRATEGY: {strategy}
 Return a JSON array of repaired test steps. Each step is an object with one of these formats:
 
 1. Navigate: {{"action": "navigate", "value": "https://example.com/page"}}
-2. Click: {{"action": "click", "name": "Button Text"}}
+2. Click: {{"action": "click", "role": "button" | "link", "name": "Button Text", "first": true}} OR {{"action": "click", "role": "button", "name": "Button Text", "parent_selector": ".card", "parent_text": "Title"}}
 3. Fill: {{"action": "fill", "label": "Input Label", "value": "test value"}}
-4. Assert visible by role: {{"action": "assert_visible", "locator_type": "role", "role": "heading", "name": "Page Title"}}
-5. Assert visible by text: {{"action": "assert_visible", "locator_type": "text", "text": "Some text on page"}}
+4. Assert visible by role: {{"action": "assert_visible", "locator_type": "role", "role": "heading", "name": "Page Title", "first": true}}
+5. Assert visible by text: {{"action": "assert_visible", "locator_type": "text", "text": "Some text on page", "first": true}}
 
 RULES:
 1. Fix ONLY the specific issue identified by the root cause.
-2. Use ONLY elements that exist in the "Actual page elements" section above.
-3. Do NOT invent selectors or element names that were not in the evidence.
-4. Keep the original test intent — do NOT remove assertions to force a pass.
+2. If the error was a Playwright strict mode violation (multiple elements matched), scope to a parent container (`"parent_selector"`, `"parent_text"`) or set `"first": true` / `"nth": <index>`.
+3. Use ONLY elements that exist in the "Actual page elements" section above.
+4. Do NOT invent selectors or element names that were not in the evidence.
+5. Keep the original test intent — do NOT remove assertions to force a pass.
 
 Return ONLY the JSON array. No markdown fences, no explanation."""
 

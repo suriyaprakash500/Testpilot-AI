@@ -539,14 +539,18 @@ Your task is to translate natural language test scenarios into concrete, executa
 1. For each scenario, translate the natural language steps and assertions into concrete executable JSON steps using the exact interactive elements found in the Accessibility Trees and Page Inspections.
 2. Step actions MUST be one of:
    - Navigate: {{"action": "navigate", "value": "https://..."}}
-   - Click: {{"action": "click", "role": "button" | "link", "name": "Exact text or aria-label from AOM/page"}}
+   - Click: {{"action": "click", "role": "button" | "link", "name": "Exact text or aria-label", "first": true}} OR with parent context: {{"action": "click", "role": "button", "name": "Exact text", "parent_selector": ".project-card", "parent_text": "Item Name"}}
    - Fill: {{"action": "fill", "label": "Exact input placeholder/label/name from page", "value": "value to type"}}
-   - Assert visible by role: {{"action": "assert_visible", "locator_type": "role", "role": "heading" | "button" | "link", "name": "Exact element name"}}
-   - Assert visible by text: {{"action": "assert_visible", "locator_type": "text", "text": "Exact visible text"}}
-3. ONLY use element names, labels, and roles that exist in the Accessibility Tree (AOM) or page inspection evidence. Do NOT invent selectors.
-4. Each scenario MUST begin with a "navigate" step to the target URL.
-5. Each scenario MUST end with at least one "assert_visible" verification.
-6. Also write the complete Python Playwright test function code using `@pytest.mark.asyncio`, `async def test_...(page: Page):`, `await page.goto(...)`, `await page.get_by_role(...).click()`, `await page.get_by_label(...).fill(...)`, and `await expect(...).to_be_visible()`.
+   - Assert visible by role: {{"action": "assert_visible", "locator_type": "role", "role": "heading" | "button" | "link", "name": "Exact element name", "first": true}}
+   - Assert visible by text: {{"action": "assert_visible", "locator_type": "text", "text": "Exact visible text", "first": true}}
+3. STRICT MODE AVOIDANCE & DUPLICATE ELEMENTS:
+   If an element's name or text is likely to appear multiple times on the page (like 'Buy Now', 'Read More', 'View Certificate', or 'Download' in a list of cards/items), you MUST either:
+   - Chain the locator to a unique parent container (e.g. `page.locator(".project-card").filter(has_text="Project Alpha").get_by_role("button", name="View Certificate").first.click()`)
+   - OR use `.first` / `.nth(index)` (e.g. `page.get_by_role("button", name="View Certificate").first.click()` or `page.get_by_text("View Certificate").first`) to avoid Playwright strict mode violations.
+4. ONLY use element names, labels, and roles that exist in the Accessibility Tree (AOM) or page inspection evidence. Do NOT invent selectors.
+5. Each scenario MUST begin with a "navigate" step to the target URL.
+6. Each scenario MUST end with at least one "assert_visible" verification.
+7. Also write the complete Python Playwright test function code using `@pytest.mark.asyncio`, `async def test_...(page: Page):`, `await page.goto(...)`, `await page.get_by_role(...).first.click()`, `await page.get_by_label(...).fill(...)`, and `await expect(...).to_be_visible()`.
 
 === OUTPUT FORMAT ===
 Return ONLY a valid JSON object matching:
@@ -556,10 +560,10 @@ Return ONLY a valid JSON object matching:
       "id": "scenario id",
       "steps": [
         {{"action": "navigate", "value": "{website_url}"}},
-        {{"action": "click", "role": "button", "name": "Button Text"}},
-        {{"action": "assert_visible", "locator_type": "role", "role": "heading", "name": "Heading Text"}}
+        {{"action": "click", "role": "button", "name": "Button Text", "first": true}},
+        {{"action": "assert_visible", "locator_type": "role", "role": "heading", "name": "Heading Text", "first": true}}
       ],
-      "code": "@pytest.mark.asyncio\\nasync def test_example(page: Page):\\n    await page.goto('{website_url}')\\n    await page.get_by_role('button', name='Button Text').click()\\n    await expect(page.get_by_role('heading', name='Heading Text')).to_be_visible()\\n"
+      "code": "@pytest.mark.asyncio\\nasync def test_example(page: Page):\\n    await page.goto('{website_url}')\\n    await page.get_by_role('button', name='Button Text').first.click()\\n    await expect(page.get_by_role('heading', name='Heading Text').first).to_be_visible()\\n"
     }}
   ]
 }}
@@ -669,13 +673,21 @@ async def playwright_gen_node(state: TestPilotState) -> Dict[str, Any]:
                     step_codes.append(f'    await page.get_by_label("{step.get("label", "")}").fill("{step.get("value", "")}")')
                 elif action == "click":
                     role = step.get("role", "button")
-                    step_codes.append(f'    await page.get_by_role("{role}", name="{step.get("name", "")}").click()')
+                    name = step.get("name", "")
+                    if step.get("parent_selector"):
+                        p_sel = step["parent_selector"]
+                        p_text = f'.filter(has_text="{step["parent_text"]}")' if step.get("parent_text") else ""
+                        step_codes.append(f'    await page.locator("{p_sel}"){p_text}.get_by_role("{role}", name="{name}").first.click()')
+                    elif step.get("nth") is not None:
+                        step_codes.append(f'    await page.get_by_role("{role}", name="{name}").nth({step["nth"]}).click()')
+                    else:
+                        step_codes.append(f'    await page.get_by_role("{role}", name="{name}").first.click()')
                 elif action == "assert_visible":
                     loc_type = step.get("locator_type", "text")
                     if loc_type == "role":
-                        step_codes.append(f'    await expect(page.get_by_role("{step.get("role", "heading")}", name="{step.get("name", "")}")).to_be_visible()')
+                        step_codes.append(f'    await expect(page.get_by_role("{step.get("role", "heading")}", name="{step.get("name", "")}").first).to_be_visible()')
                     else:
-                        step_codes.append(f'    await expect(page.get_by_text("{step.get("text", "")}")).to_be_visible()')
+                        step_codes.append(f'    await expect(page.get_by_text("{step.get("text", "")}").first).to_be_visible()')
 
             test_code = (
                 f"@pytest.mark.asyncio\n"
@@ -734,7 +746,8 @@ def _get_error_message(exc: Exception) -> str:
 async def _execute_step(page, step: dict, logs: list) -> None:
     """Executes a single test plan step against a Playwright page.
 
-    Raises on failure so the caller can mark the test as failed.
+    Handles duplicate elements, parent container chaining, and .first / .nth
+    scoping to prevent Playwright strict mode violations.
     """
     action = step["action"]
 
@@ -760,30 +773,64 @@ async def _execute_step(page, step: dict, logs: list) -> None:
 
     elif action == "click":
         name = step.get("name", "")
-        btn_loc = page.locator(
-            f"button:has-text('{name}'), a:has-text('{name}'), button"
-        ).locator("visible=true").first
+        role = step.get("role", "button")
+        parent_sel = step.get("parent_selector")
+        parent_text = step.get("parent_text")
+
+        if parent_sel:
+            base = page.locator(parent_sel)
+            if parent_text:
+                base = base.filter(has_text=parent_text)
+        else:
+            base = page
+
+        # Find locator by role first, fallback to text/tag match
+        btn_loc = base.get_by_role(role, name=name) if name else base.locator("button, a")
+        if await btn_loc.count() == 0 and name:
+            btn_loc = base.locator(f"button:has-text('{name}'), a:has-text('{name}'), [role='button']:has-text('{name}')")
+
+        # Handle multiple matching elements (strict mode prevention)
+        if step.get("nth") is not None:
+            btn_loc = btn_loc.nth(step["nth"])
+        else:
+            btn_loc = btn_loc.first
+
         if await btn_loc.count() > 0:
-            btn_text = await btn_loc.inner_text() or name
+            btn_text = (await btn_loc.inner_text()).strip() or name
             await btn_loc.click()
-            logs.append(f"[Playwright] Trigger action: clicked button '{btn_text}'")
+            logs.append(f"[Playwright] Trigger action: clicked {role} '{btn_text}'")
             await page.wait_for_timeout(1000)
         else:
-            logs.append(f"[Playwright] Locator button '{name}' not found, skipping click")
+            logs.append(f"[Playwright] Locator {role} '{name}' not found, skipping click")
 
     elif action == "assert_visible":
-        loc_type = step["locator_type"]
+        loc_type = step.get("locator_type", "text")
+        parent_sel = step.get("parent_selector")
+        parent_text = step.get("parent_text")
+
+        if parent_sel:
+            base = page.locator(parent_sel)
+            if parent_text:
+                base = base.filter(has_text=parent_text)
+        else:
+            base = page
+
         if loc_type == "role":
-            role_name = step["role"]
-            element_name = step["name"]
-            locator = page.get_by_role(role_name, name=element_name)
-            await expect(locator).to_be_visible(timeout=5000)
-            logs.append(f"[Playwright] Assert visible: role '{role_name}' name '{element_name}' -> True")
-        elif loc_type == "text":
-            text = step["text"]
-            locator = page.get_by_text(text)
-            await expect(locator).to_be_visible(timeout=5000)
-            logs.append(f"[Playwright] Assert visible: text '{text}' -> True")
+            role_name = step.get("role", "button")
+            element_name = step.get("name", "")
+            locator = base.get_by_role(role_name, name=element_name)
+        else:
+            text = step.get("text", "")
+            locator = base.get_by_text(text)
+
+        # Scoping to prevent strict mode errors when text appears multiple times
+        if step.get("nth") is not None:
+            locator = locator.nth(step["nth"])
+        else:
+            locator = locator.first
+
+        await expect(locator).to_be_visible(timeout=5000)
+        logs.append(f"[Playwright] Assert visible: {loc_type} '{step.get('name') or step.get('text')}' -> True")
 
 
 async def browser_execution_node(state: TestPilotState) -> Dict[str, Any]:
