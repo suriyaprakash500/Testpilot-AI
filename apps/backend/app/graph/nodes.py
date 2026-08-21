@@ -609,13 +609,13 @@ def _fallback_playwright_steps(scenario: dict, website_url: str, inspections: li
         if inputs:
             steps.append({"action": "fill", "label": inputs[0], "value": "test@testpilot.ai"})
         if buttons:
-            steps.append({"action": "click", "role": "button", "name": buttons[0]})
+            steps.append({"action": "click", "role": "button", "name": buttons[0], "first": True})
         if headings:
-            steps.append({"action": "assert_visible", "locator_type": "role", "role": "heading", "name": headings[0]})
+            steps.append({"action": "assert_visible", "locator_type": "role", "role": "heading", "name": headings[0], "first": True})
         else:
-            steps.append({"action": "assert_visible", "locator_type": "text", "text": matching_insp.get("title", "App")})
+            steps.append({"action": "assert_visible", "locator_type": "text", "text": matching_insp.get("title", "App"), "first": True})
     else:
-        steps.append({"action": "assert_visible", "locator_type": "text", "text": scenario.get("feature", "Home")})
+        steps.append({"action": "assert_visible", "locator_type": "text", "text": scenario.get("feature", "Home"), "first": True})
 
     return steps
 
