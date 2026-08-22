@@ -950,6 +950,30 @@ async def browser_execution_node(state: TestPilotState) -> Dict[str, Any]:
                 "logs": f"> playwright test\n[Error] Browser launch failed: {error_msg}"
             })
 
+        # Merge scoped re-execution results back into the full result set.
+    # Without this, LangGraph's last-write-wins on `execution_results` (it has
+    # no reducer) would replace the original full-suite results with only the
+    # re-run subset, wiping all previously passing tests from the report.
+    if tests_to_execute:
+        prior_by_id = {
+            _normalize_test_id(r.get("test_name", "")): r
+            for r in (state.get("execution_results") or [])
+        }
+        fresh_by_id = {
+            _normalize_test_id(r.get("test_name", "")): r for r in results
+        }
+        merged_by_id = {**prior_by_id, **fresh_by_id}
+        merged = []
+        for scenario in plan:  # preserve original plan order
+            tid = _normalize_test_id(scenario["name"])
+            if tid in merged_by_id:
+                merged.append(merged_by_id[tid])
+        results = merged
+        logger.info(
+            f"[Node: browser_execution] Merged scoped results back: "
+            f"{len(results)} total tests in final report"
+        )
+
     passed = sum(1 for r in results if r["status"] == "passed")
     return {
         "execution_results": results,

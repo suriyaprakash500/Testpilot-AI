@@ -69,15 +69,54 @@ export interface UpdateProjectInput {
   testPassword?: string;
 }
 
+export type RunStatus =
+  | "pending"
+  | "analyzing"
+  | "repo_analysis"
+  | "page_inspection"
+  | "code_analysis"
+  | "app_understanding"
+  | "test_planning"
+  | "playwright_gen"
+  | "execution"
+  | "executing"
+  | "evaluating"
+  | "analyzing_failures"
+  | "repairing"
+  | "retrying"
+  | "creating_pr"
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "cancelling"
+  | "completed_with_failures";
+
+export interface TimelineEvent {
+  node: string;
+  status: string;
+  elapsedSec: number;
+}
+
 export interface TestRun {
   id: string;
   projectId: string;
-  status: "pending" | "executing" | "completed" | "failed" | "analyzing" | "cancelled" | "cancelling" | "completed_with_failures";
+  status: RunStatus;
   trigger: "manual" | "webhook" | "schedule";
   startedAt: string | null;
   completedAt: string | null;
   prUrl?: string | null;
   createdAt: string;
+  // Run summary (populated at pipeline completion)
+  plannedTotal?: number | null;
+  passedFirstPass?: number | null;
+  failedFirstPass?: number | null;
+  passedFinal?: number | null;
+  failedFinal?: number | null;
+  inconclusiveFinal?: number | null;
+  repairedCount?: number | null;
+  appBugCount?: number | null;
+  retryCount?: number | null;
+  timeline?: TimelineEvent[] | string | null;
 }
 
 export interface TestCase {

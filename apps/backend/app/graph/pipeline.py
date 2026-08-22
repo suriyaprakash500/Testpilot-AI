@@ -1,5 +1,6 @@
 import logging
 import asyncio
+import time
 from typing import Dict, Any, Optional, Callable
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
@@ -105,8 +106,8 @@ def build_pipeline():
 pipeline_app = build_pipeline()
 
 # Maps node names to frontend-visible status strings.
-# Feedback loop nodes map to "executing" to maintain backward
-# compatibility with the existing frontend polling contract.
+# Feedback-loop nodes emit DISTINCT statuses so the UI can visualize
+# evaluation / triage / repair / PR phases instead of a frozen "executing".
 NODE_STATUS_MAP = {
     "auth_check": "repo_analysis",
     "repo_analysis": "repo_analysis",
@@ -117,11 +118,11 @@ NODE_STATUS_MAP = {
     "test_planning": "test_planning",
     "playwright_gen": "playwright_gen",
     "browser_execution": "execution",
-    "test_evaluation": "executing",
-    "failure_analysis": "executing",
-    "test_repair": "executing",
-    "inconclusive_retry": "executing",
-    "github_pr": "execution",
+    "test_evaluation": "evaluating",
+    "failure_analysis": "analyzing_failures",
+    "test_repair": "repairing",
+    "inconclusive_retry": "retrying",
+    "github_pr": "creating_pr",
     "abort": "failed",
 }
 
@@ -161,7 +162,7 @@ async def run_pipeline(
         "inconclusive_retries": {},
         "repaired_tests": {},
         "suspected_app_bugs": [],
-        "tests_to_execute": None,
+                "tests_to_execute": None,
     }
 
     config = {
@@ -171,10 +172,26 @@ async def run_pipeline(
 
     # Stream node-by-node to emit status updates between steps
     final_state = initial_state
+    timeline: list = []
+    started_at = time.time()
+    first_pass_stats: Optional[Dict[str, int]] = None
+
     async for event in pipeline_app.astream(initial_state, config=config, stream_mode="updates"):
         for node_name, node_output in event.items():
             status = NODE_STATUS_MAP.get(node_name, "executing")
             logger.info(f"[Pipeline] Node '{node_name}' completed → status='{status}'")
+            timeline.append({
+                "node": node_name,
+                "status": status,
+                "elapsedSec": round(time.time() - started_at, 1),
+            })
+            # Capture first-pass execution stats (before any repair re-runs)
+            if node_name == "browser_execution" and first_pass_stats is None:
+                exec_results = (node_output or {}).get("execution_results") or []
+                first_pass_stats = {
+                    "passed": sum(1 for r in exec_results if r.get("status") == "passed"),
+                    "failed": sum(1 for r in exec_results if r.get("status") != "passed"),
+                }
             if on_status_change:
                 on_status_change(status)
             # Brief yield to let the event loop serve polling requests
@@ -183,5 +200,23 @@ async def run_pipeline(
     # Get the final checkpointed state
     final_snapshot = await pipeline_app.aget_state(config)
     final_state = dict(final_snapshot.values)
+
+    # Attach non-checkpointed reporting data. These keys are consumed by the
+    # API layer (test_runs router) to persist run summaries; they are NOT part
+    # of TestPilotState and never flow back into the graph.
+    final_results = final_state.get("execution_results") or []
+    repair_attempts = final_state.get("repair_attempts") or {}
+    final_state["run_summary"] = {
+        "plannedTotal": len(final_state.get("test_plan") or []),
+        "passedFirstPass": (first_pass_stats or {}).get("passed"),
+        "failedFirstPass": (first_pass_stats or {}).get("failed"),
+        "passedFinal": sum(1 for r in final_results if r.get("status") == "passed"),
+        "failedFinal": sum(1 for r in final_results if r.get("status") == "failed"),
+        "inconclusiveFinal": sum(1 for r in final_results if r.get("status") not in ("passed", "failed")),
+        "repairedCount": sum(1 for v in repair_attempts.values() if v > 0),
+        "appBugCount": len(final_state.get("suspected_app_bugs") or []),
+        "retryCount": sum(1 for v in (final_state.get("inconclusive_retries") or {}).values() if v > 0),
+    }
+    final_state["timeline"] = timeline
 
     return final_state

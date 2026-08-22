@@ -2,41 +2,60 @@
 
 import Link from "next/link";
 import { use, useState, useEffect } from "react";
-import { ArrowLeft, CheckCircle2, XCircle, Trash2, Terminal, Code, Copy, Check } from "lucide-react";
-import { api, getErrorMessage, type TestRun, type TestCase } from "../../../../../lib/api";
+import { ArrowLeft, CheckCircle2, XCircle, Trash2, Terminal, Code, Copy, Check, ListChecks, Wrench, Bug, RefreshCw } from "lucide-react";
+import { api, getErrorMessage, type TestRun, type TestCase, type TimelineEvent } from "../../../../../lib/api";
 
 const TERMINAL_STATUSES = ["completed", "completed_with_failures", "failed", "cancelled"];
 
-function getPipelineSteps(status: string) {
-  const stages = [
-    "Repo Analysis",
-    "Live Inspection",
-    "Code Analysis",
-    "App Understanding",
-    "Test Planning",
-    "Playwright Gen",
-    "Browser Execution",
-  ];
-  const order = [
-    "repo_analysis",
-    "page_inspection",
-    "code_analysis",
-    "app_understanding",
-    "test_planning",
-    "playwright_gen",
-    "execution",
-    "completed",
-    "completed_with_failures",
-  ];
-  const isTerminalSuccess = status === "completed" || status === "completed_with_failures";
-  const currentIdx = order.indexOf(status);
+interface PipelineStage {
+  label: string;
+  statuses: string[];
+}
 
-  return stages.map((label, idx) => ({
-    label,
-    isDone: isTerminalSuccess ? true : idx < currentIdx,
-    isActive: !isTerminalSuccess && idx === currentIdx,
-    isFailed: status === "failed" && idx >= currentIdx && currentIdx !== -1,
-  }));
+// Mirrors backend NODE_STATUS_MAP (app/graph/pipeline.py). Each UI stage maps
+// to one or more backend statuses; the repair loop re-enters "execution".
+const PIPELINE_STAGES: PipelineStage[] = [
+  { label: "Repo Analysis", statuses: ["repo_analysis", "analyzing", "pending"] },
+  { label: "Live Inspection", statuses: ["page_inspection"] },
+  { label: "Code Analysis", statuses: ["code_analysis"] },
+  { label: "App Understanding", statuses: ["app_understanding"] },
+  { label: "Test Planning", statuses: ["test_planning"] },
+  { label: "Playwright Gen", statuses: ["playwright_gen"] },
+  { label: "Execution", statuses: ["execution"] },
+  { label: "Evaluation", statuses: ["evaluating"] },
+  { label: "Triage & Repair", statuses: ["analyzing_failures", "repairing", "retrying"] },
+  { label: "GitHub PR", statuses: ["creating_pr"] },
+];
+
+const STATUS_ORDER: string[] = PIPELINE_STAGES.flatMap((s) => s.statuses);
+
+function getPipelineSteps(status: string) {
+  const isTerminalSuccess = status === "completed" || status === "completed_with_failures";
+  const isFailed = status === "failed";
+  const currentIdx = STATUS_ORDER.indexOf(status);
+
+  return PIPELINE_STAGES.map((stage) => {
+    const idxs = stage.statuses.map((s) => STATUS_ORDER.indexOf(s)).filter((i) => i >= 0);
+    const minIdx = idxs.length ? Math.min(...idxs) : 0;
+    const maxIdx = idxs.length ? Math.max(...idxs) : 0;
+    return {
+      label: stage.label,
+      isDone: isTerminalSuccess || (!isFailed && currentIdx > maxIdx),
+      isActive: !isTerminalSuccess && !isFailed && currentIdx >= minIdx && currentIdx <= maxIdx,
+      isFailedStage: isFailed && currentIdx >= minIdx,
+    };
+  });
+}
+
+function parseTimeline(timeline: TestRun["timeline"]): TimelineEvent[] {
+  if (!timeline) return [];
+  if (Array.isArray(timeline)) return timeline;
+  try {
+    const parsed = JSON.parse(timeline);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
 }
 
 export default function RunDetailPage({
@@ -140,10 +159,31 @@ export default function RunDetailPage({
     );
   }
 
-  const passed = testCases.filter((t) => t.status === "passed").length;
+    const passed = testCases.filter((t) => t.status === "passed").length;
   const failed = testCases.filter((t) => t.status === "failed").length;
   const total = testCases.length;
   const selectedCase = testCases.find((tc) => tc.id === selectedCaseId) || testCases[0];
+
+  // Run summary stats (persisted at pipeline completion; fall back to
+  // per-test-case counts for runs that predate the summary fields).
+  const plannedTotal = run.plannedTotal ?? total;
+  const passedFinal = run.passedFinal ?? passed;
+  const failedFinal = run.failedFinal ?? failed;
+  const repairedCount = run.repairedCount ?? 0;
+  const appBugCount = run.appBugCount ?? 0;
+  const retryCount = run.retryCount ?? 0;
+  const failedFirstPass = run.failedFirstPass ?? null;
+  const timeline = parseTimeline(run.timeline);
+  const hasSummary = run.plannedTotal != null || run.passedFinal != null;
+
+  const summaryStats = [
+    { label: "Tests Created", value: plannedTotal, color: "#a78bfa", icon: ListChecks },
+    { label: "Passed", value: passedFinal, color: "var(--success)", icon: CheckCircle2 },
+    { label: "Failed", value: failedFinal, color: "var(--error)", icon: XCircle },
+    { label: "Auto-Fixed", value: repairedCount, color: "#38bdf8", icon: Wrench },
+    { label: "App Bugs", value: appBugCount, color: "var(--warning)", icon: Bug },
+    { label: "Retries", value: retryCount, color: "var(--text-muted)", icon: RefreshCw },
+  ];
 
   return (
     <div className="p-6 max-w-7xl mx-auto h-[calc(100vh-3.5rem)] flex flex-col gap-5">
@@ -192,6 +232,30 @@ export default function RunDetailPage({
         </div>
       </div>
 
+            {/* Run Summary Stats */}
+      {(hasSummary || TERMINAL_STATUSES.includes(run.status)) && (
+        <div className="grid gap-3 flex-shrink-0" style={{ gridTemplateColumns: "repeat(6, minmax(0, 1fr))" }}>
+          {summaryStats.map((stat) => (
+            <div key={stat.label} className="glass p-3 flex flex-col gap-1.5">
+              <div className="flex items-center gap-1.5">
+                <stat.icon size={11} style={{ color: stat.color }} />
+                <span className="text-[9px] uppercase tracking-wider font-semibold" style={{ color: "var(--text-muted)" }}>
+                  {stat.label}
+                </span>
+              </div>
+              <span className="text-lg font-bold leading-none" style={{ color: stat.color }}>
+                {stat.value}
+              </span>
+              {stat.label === "Failed" && failedFirstPass != null && failedFirstPass > failedFinal && (
+                <span className="text-[9px] font-mono" style={{ color: "var(--text-muted)" }}>
+                  {failedFirstPass} on first pass
+                </span>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* Pipeline Steps */}
       <div className="glass p-4 flex-shrink-0">
         <div className="flex justify-between items-center mb-3">
@@ -202,7 +266,7 @@ export default function RunDetailPage({
             {run.status.toUpperCase()}
           </span>
         </div>
-        <div className="grid grid-cols-7 gap-3">
+        <div className="grid gap-3" style={{ gridTemplateColumns: `repeat(${PIPELINE_STAGES.length}, minmax(0, 1fr))` }}>
           {getPipelineSteps(run.status).map((step, i) => (
             <div key={step.label} className="flex flex-col items-center text-center gap-2">
               <div
@@ -210,7 +274,7 @@ export default function RunDetailPage({
                     ? "bg-emerald-950 border-emerald-500 text-emerald-400"
                     : step.isActive
                       ? "border-violet-500 text-violet-400 animate-pulse shadow-[0_0_12px_rgba(139,92,246,0.4)]"
-                      : step.isFailed
+                      : step.isFailedStage
                         ? "bg-rose-950 border-rose-500 text-rose-400"
                         : "border-zinc-800 text-zinc-600 bg-zinc-950"
                   }`}
@@ -218,7 +282,7 @@ export default function RunDetailPage({
                 {step.isActive && (
                   <span className="absolute inset-0 rounded-full border border-violet-400 pulse-ring-active pointer-events-none" />
                 )}
-                {step.isDone ? "✓" : step.isFailed ? "!" : i + 1}
+                {step.isDone ? "✓" : step.isFailedStage ? "!" : i + 1}
               </div>
               <span className="text-[10px] font-medium" style={{ color: step.isDone || step.isActive ? "var(--text-primary)" : "var(--text-muted)" }}>
                 {step.label}
@@ -226,6 +290,26 @@ export default function RunDetailPage({
             </div>
           ))}
         </div>
+
+        {/* Node execution timeline */}
+        {timeline.length > 0 && (
+          <div className="mt-3 pt-3 border-t flex flex-wrap gap-1.5" style={{ borderColor: "var(--border)" }}>
+            {timeline.map((ev, i) => (
+              <span
+                key={`${ev.node}-${i}`}
+                className="text-[9px] font-mono px-1.5 py-0.5 rounded border"
+                style={{
+                  color: ev.status === "failed" ? "var(--error)" : "var(--text-secondary)",
+                  borderColor: "var(--border)",
+                  background: "var(--bg-secondary)",
+                }}
+                title={`${ev.node} → ${ev.status}`}
+              >
+                {ev.node} · {ev.elapsedSec}s
+              </span>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Content Area */}

@@ -182,6 +182,68 @@ class TestClassifyTestResult:
         assert len(result["evidence"]) <= 300
 
 
+class TestRealWorldFailureRegression:
+    """Regressions from run 29e07b17: real Playwright failures were
+    misclassified as INCONCLUSIVE because the bare 'timeout' environment
+    pattern outranked selector patterns, starving failure_analysis/test_repair.
+    """
+
+    def test_click_timeout_waiting_for_locator_returns_fail(self):
+        """'Locator.click: Timeout exceeded ... waiting for locator(...)' is a repairable defect."""
+        result = _classify_test_result({
+            "status": "failed",
+            "error": "Locator.click: Timeout 30000ms exceeded.\nCall log:\n  - waiting for locator(\"button:has-text('Customize')\")",
+            "logs": "",
+            "duration_ms": 32556,
+        })
+        assert result["verdict"] == "FAIL"
+        assert result["category"] == "selector_failure"
+
+    def test_expect_not_found_returns_fail(self):
+        """'Locator expected to be visible / Error: element(s) not found' is a defect."""
+        result = _classify_test_result({
+            "status": "failed",
+            "error": "Locator expected to be visible\nActual value: None\nError: element(s) not found",
+            "logs": "",
+            "duration_ms": 7383,
+        })
+        assert result["verdict"] == "FAIL"
+        assert result["category"] == "selector_failure"
+
+    def test_timeout_with_get_by_role_wait_returns_fail(self):
+        result = _classify_test_result({
+            "status": "failed",
+            "error": "Timeout 5000ms exceeded.\nwaiting for get_by_role(\"heading\", name=\"Dashboard\")",
+            "logs": "",
+            "duration_ms": 5100,
+        })
+        assert result["verdict"] == "FAIL"
+        assert result["category"] == "selector_failure"
+
+    def test_bare_timeout_without_locator_context_is_fail(self):
+        """A bare timeout with no infra signal should reach failure_analysis (FAIL), not be dismissed as env flake."""
+        result = _classify_test_result({
+            "status": "failed",
+            "error": "Timeout 30000ms exceeded",
+            "logs": "",
+            "duration_ms": 30000,
+        })
+        assert result["verdict"] == "FAIL"
+
+    def test_navigation_still_inconclusive_despite_locator_word(self):
+        """True navigation timeouts stay INCONCLUSIVE even if logs mention locators elsewhere."""
+        result = _classify_test_result({
+            "status": "failed",
+            "error": "page.goto: Navigation timeout of 15000ms exceeded",
+            "logs": "earlier attempt had waiting for locator('#x')",
+            "duration_ms": 15000,
+        })
+        # Selector patterns checked first -> this now classifies as FAIL by design:
+        # goto errors never contain locator-wait text in the ERROR field itself,
+        # so the combined_output check must not let stale log text hijack it.
+        assert result["verdict"] == "INCONCLUSIVE"
+
+
 class TestEvaluationNode:
     """Tests for the test_evaluation_node async function."""
 

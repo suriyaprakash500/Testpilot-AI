@@ -30,7 +30,17 @@ CREATE TABLE IF NOT EXISTS runs (
     startedAt TEXT,
     completedAt TEXT,
     prUrl TEXT,
-    createdAt TEXT
+    createdAt TEXT,
+    plannedTotal INTEGER,
+    passedFirstPass INTEGER,
+    failedFirstPass INTEGER,
+    passedFinal INTEGER,
+    failedFinal INTEGER,
+    inconclusiveFinal INTEGER,
+    repairedCount INTEGER,
+    appBugCount INTEGER,
+    retryCount INTEGER,
+    timeline TEXT
 );
 CREATE TABLE IF NOT EXISTS test_cases (
     id TEXT PRIMARY KEY,
@@ -46,6 +56,29 @@ CREATE TABLE IF NOT EXISTS test_cases (
 );
 """
 
+# Columns added after the initial schema. ALTER TABLE is idempotent-guarded
+# so existing databases are migrated in place on first connect.
+_RUN_MIGRATION_COLUMNS = [
+    ("plannedTotal", "INTEGER"),
+    ("passedFirstPass", "INTEGER"),
+    ("failedFirstPass", "INTEGER"),
+    ("passedFinal", "INTEGER"),
+    ("failedFinal", "INTEGER"),
+    ("inconclusiveFinal", "INTEGER"),
+    ("repairedCount", "INTEGER"),
+    ("appBugCount", "INTEGER"),
+    ("retryCount", "INTEGER"),
+    ("timeline", "TEXT"),
+]
+
+
+def _migrate_runs_table(conn: sqlite3.Connection) -> None:
+    """Adds any missing run-summary columns to an existing runs table."""
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(runs)").fetchall()}
+    for name, coltype in _RUN_MIGRATION_COLUMNS:
+        if name not in existing:
+            conn.execute(f"ALTER TABLE runs ADD COLUMN {name} {coltype}")
+
 
 def _get_conn() -> sqlite3.Connection:
     global _conn
@@ -53,6 +86,7 @@ def _get_conn() -> sqlite3.Connection:
         _conn = sqlite3.connect(_DB_PATH, check_same_thread=False)
         _conn.row_factory = sqlite3.Row
         _conn.executescript(_SCHEMA)
+        _migrate_runs_table(_conn)
         _conn.commit()
     return _conn
 

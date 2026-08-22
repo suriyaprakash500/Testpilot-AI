@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { Clock, Play, CheckCircle2, XCircle, ChevronRight, Trash2, Square, AlertTriangle } from "lucide-react";
+import { Clock, Play, CheckCircle2, XCircle, ChevronRight, Trash2, Square, AlertTriangle, Wrench, RefreshCw, GitPullRequest } from "lucide-react";
 import { api, getErrorMessage, type TestRun } from "../../../lib/api";
 
 const STATUS_STYLES: Record<string, { icon: typeof CheckCircle2; color: string; label: string }> = {
@@ -11,12 +11,27 @@ const STATUS_STYLES: Record<string, { icon: typeof CheckCircle2; color: string; 
   executing: { icon: Play, color: "var(--accent)", label: "Running" },
   pending: { icon: Clock, color: "var(--warning)", label: "Pending" },
   analyzing: { icon: Play, color: "var(--accent)", label: "Analyzing" },
+  evaluating: { icon: Play, color: "var(--accent)", label: "Evaluating" },
+  analyzing_failures: { icon: AlertTriangle, color: "var(--warning)", label: "Triaging Failures" },
+  repairing: { icon: Wrench, color: "var(--warning)", label: "Auto-Repairing" },
+  retrying: { icon: RefreshCw, color: "var(--accent)", label: "Retrying" },
+  creating_pr: { icon: GitPullRequest, color: "var(--success)", label: "Creating PR" },
   cancelled: { icon: XCircle, color: "var(--text-muted)", label: "Cancelled" },
   cancelling: { icon: Clock, color: "var(--warning)", label: "Cancelling..." },
   completed_with_failures: { icon: AlertTriangle, color: "var(--warning)", label: "Partial Failures" },
 };
 
-const ACTIVE_RUN_STATUSES = new Set(["analyzing", "pending", "executing", "cancelling"]);
+const ACTIVE_RUN_STATUSES = new Set([
+  "analyzing",
+  "pending",
+  "executing",
+  "evaluating",
+  "analyzing_failures",
+  "repairing",
+  "retrying",
+  "creating_pr",
+  "cancelling",
+]);
 
 interface RunWithProject extends TestRun {
   projectName: string;

@@ -1,4 +1,5 @@
 ﻿import uuid
+import json
 import logging
 import asyncio
 from typing import Dict, Any
@@ -53,8 +54,14 @@ async def _execute_pipeline_and_update(project_id: str, run_id: str, website_url
             "status": final_state.get("status", "completed"),
             "completedAt": _now_iso(),
             "prUrl": final_state.get("pr_url"),
+            # Run summary stats (computed in run_pipeline; may be absent on
+            # older runs or mid-run failures — update_run skips Nones safely
+            # because we only include keys that exist).
+            **(final_state.get("run_summary") or {}),
+            "timeline": json.dumps(final_state.get("timeline") or []),
         })
-        logger.info(f"Pipeline completed for run {run_id}: status={final_state.get('status')}")
+        logger.info(f"Pipeline completed for run {run_id}: status={final_state.get('status')} "
+                    f"summary={final_state.get('run_summary')}")
 
     except asyncio.CancelledError:
         logger.info(f"Run {run_id} cancelled by user")

@@ -5,14 +5,17 @@ from app.graph.state import TestPilotState
 logger = logging.getLogger("graph-test-evaluation")
 
 
-# Keywords indicating infrastructure/environment failure
+# Keywords indicating infrastructure/environment failure.
+# NOTE: deliberately SPECIFIC signals only — a generic "timeout" is NOT here,
+# because Playwright interaction timeouts ("Timeout ... exceeded waiting for
+# locator(...)") are usually repairable test defects, not environment flakes.
 _ENVIRONMENT_ERROR_PATTERNS = [
     "net::err_",
     "dns_probe",
     "econnrefused",
     "connection refused",
-    "timeout",
     "navigation timeout",
+    "goto timeout",
     "err_connection_reset",
     "err_name_not_resolved",
     "service unavailable",
@@ -20,13 +23,18 @@ _ENVIRONMENT_ERROR_PATTERNS = [
     "503 service",
 ]
 
-# Patterns indicating a Playwright selector error
+# Patterns indicating a Playwright selector/element error.
+# NOTE: these are checked BEFORE environment patterns so that errors which
+# contain BOTH kinds of text (e.g. "Locator.click: Timeout 30000ms exceeded.
+# waiting for locator(...)") are correctly classified as repairable FAILs.
 _SELECTOR_ERROR_PATTERNS = [
     "waiting for selector",
     "waiting for locator",
+    "waiting for get_by_",
     "locator resolved to",
     "strict mode violation",
     "no element matches",
+    "element(s) not found",
     "element is not visible",
     "element is not attached",
 ]
@@ -53,7 +61,7 @@ def _classify_test_result(test_result: Dict[str, Any]) -> Dict[str, Any]:
             "evidence": ""
         }
 
-    # Zero-duration test -> never executed
+        # Zero-duration test -> never executed
     if duration_ms == 0 and status != "passed":
         return {
             "verdict": "INCONCLUSIVE",
@@ -62,6 +70,19 @@ def _classify_test_result(test_result: Dict[str, Any]) -> Dict[str, Any]:
             "evidence": error or "No execution data"
         }
 
+        # Playwright selector/element error (checked FIRST: interaction timeouts
+    # that mention locators are repairable defects, not environment flakes).
+    # Matched against the ERROR FIELD ONLY so stale locator-wait text in old
+    # log lines cannot hijack a genuine navigation/environment timeout.
+    for pattern in _SELECTOR_ERROR_PATTERNS:
+        if pattern in error:
+            return {
+                "verdict": "FAIL",
+                "category": "selector_failure",
+                "reason": f"Playwright selector error: '{pattern}' found in output.",
+                "evidence": error[:300] if error else logs[:300]
+            }
+
     # Infrastructure/environment failure (DNS, connection, navigation timeout)
     for pattern in _ENVIRONMENT_ERROR_PATTERNS:
         if pattern in combined_output:
@@ -69,16 +90,6 @@ def _classify_test_result(test_result: Dict[str, Any]) -> Dict[str, Any]:
                 "verdict": "INCONCLUSIVE",
                 "category": "environment_error",
                 "reason": f"Environment/infrastructure failure detected: '{pattern}' found in output.",
-                "evidence": error[:300] if error else logs[:300]
-            }
-
-    # Playwright selector error
-    for pattern in _SELECTOR_ERROR_PATTERNS:
-        if pattern in combined_output:
-            return {
-                "verdict": "FAIL",
-                "category": "selector_failure",
-                "reason": f"Playwright selector error: '{pattern}' found in output.",
                 "evidence": error[:300] if error else logs[:300]
             }
 
