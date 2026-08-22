@@ -72,7 +72,7 @@ export interface UpdateProjectInput {
 export interface TestRun {
   id: string;
   projectId: string;
-  status: "pending" | "executing" | "completed" | "failed" | "analyzing";
+  status: "pending" | "executing" | "completed" | "failed" | "analyzing" | "cancelled" | "cancelling" | "completed_with_failures";
   trigger: "manual" | "webhook" | "schedule";
   startedAt: string | null;
   completedAt: string | null;
@@ -204,10 +204,17 @@ export const api = {
     return response.data;
   },
 
-  deleteRun: async (runId: string): Promise<void> => {
+    deleteRun: async (runId: string): Promise<void> => {
     await fetchApi<{ deleted: boolean }>(`/api/test-runs/run/${runId}`, {
       method: "DELETE",
     });
+  },
+
+  cancelRun: async (runId: string): Promise<{ status: string }> => {
+    const response = await fetchApi<{ status: string }>(`/api/test-runs/run/${runId}/cancel`, {
+      method: "POST",
+    });
+    return response.data;
   },
 
   getRuns: async (projectId: string): Promise<TestRun[]> => {

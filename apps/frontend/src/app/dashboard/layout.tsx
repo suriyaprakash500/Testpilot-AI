@@ -2,14 +2,14 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { 
-  LayoutDashboard, 
-  BarChart3, 
-  Settings, 
-  Search, 
-  Bell, 
+import { useState, useEffect } from "react";
+import {
+  LayoutDashboard,
+  BarChart3,
+  Settings,
   ChevronDown
 } from "lucide-react";
+import { api, type UserProfile } from "../../lib/api";
 
 interface NavItem {
   label: string;
@@ -25,6 +25,19 @@ const NAV_ITEMS: NavItem[] = [
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const [user, setUser] = useState<UserProfile | null>(null);
+
+  useEffect(() => {
+    let isMounted = true;
+    api.getCurrentUser()
+      .then((profile) => {
+        if (isMounted) setUser(profile);
+      })
+      .catch(() => {});
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   return (
     <div className="min-h-screen flex relative overflow-hidden" style={{ background: "var(--bg-primary)" }}>
@@ -81,21 +94,31 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           })}
         </nav>
 
-        {/* User Profile Footer */}
+                {/* User Profile Footer */}
         <div className="p-3 border-t" style={{ borderColor: "var(--border)" }}>
           <div className="flex items-center gap-3 px-3 py-2">
-            <div
-              className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold border"
-              style={{ background: "var(--bg-tertiary)", borderColor: "var(--border)", color: "var(--text-secondary)" }}
-            >
-              U
-            </div>
-            <div>
-              <div className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>
-                User Profile
+            {user?.avatarUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={user.avatarUrl}
+                alt={user.name}
+                className="w-8 h-8 rounded-full border"
+                style={{ borderColor: "var(--border)" }}
+              />
+            ) : (
+              <div
+                className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold border"
+                style={{ background: "var(--bg-tertiary)", borderColor: "var(--border)", color: "var(--text-secondary)" }}
+              >
+                {(user?.name || "G").charAt(0).toUpperCase()}
               </div>
-              <div className="text-[10px] font-mono text-violet-400">
-                PRO DEV MODE
+            )}
+            <div className="min-w-0">
+              <div className="text-sm font-semibold truncate" style={{ color: "var(--text-primary)" }}>
+                {user?.name || "Guest User"}
+              </div>
+              <div className="text-[10px] font-mono text-violet-400 truncate">
+                {user?.email || "Not signed in"}
               </div>
             </div>
           </div>
@@ -104,39 +127,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col overflow-hidden">
-        {/* Top Navbar */}
+                {/* Top Navbar */}
         <header
-          className="h-14 flex-shrink-0 flex items-center justify-between px-6 border-b z-10"
+          className="h-14 flex-shrink-0 flex items-center justify-end px-6 border-b z-10"
           style={{ background: "rgba(7, 11, 20, 0.7)", backdropFilter: "blur(12px)", borderColor: "var(--border)" }}
         >
-          {/* Global Search Command Palette Bar */}
-          <div className="flex items-center gap-3 w-80 relative">
-            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: "var(--text-muted)" }} />
-            <input
-              type="text"
-              readOnly
-              placeholder="Search or ask AI... (Cmd + K)"
-              className="w-full pl-9 pr-4 py-1.5 rounded-lg text-xs outline-none border cursor-pointer transition-all duration-200"
-              style={{
-                background: "var(--bg-secondary)",
-                borderColor: "var(--border)",
-                color: "var(--text-secondary)",
-              }}
-              onClick={() => alert("AI Command Palette activated.")}
-            />
-          </div>
-
-          {/* Header Action Buttons */}
-          <div className="flex items-center gap-4">
-            <button 
-              className="p-1.5 rounded-md border transition-all hover:bg-zinc-950 relative cursor-pointer" 
-              style={{ borderColor: "var(--border)", color: "var(--text-secondary)" }}
-              title="Notifications"
-            >
-              <Bell size={14} />
-              <span className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-rose-500 pulse-dot" />
-            </button>
-          </div>
+          {/* Child Pages */}
         </header>
 
         {/* Child Pages */}

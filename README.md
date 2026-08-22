@@ -57,6 +57,8 @@ testpilot-ai/
 │   ├── backend/                # Python FastAPI + LangGraph Backend
 │   │   ├── app/
 │   │   │   ├── main.py         # FastAPI REST Endpoint
+│   │   │   ├── db.py           # SQLite Persistence (projects, runs, test cases)
+│   │   │   ├── llm.py          # Provider-agnostic LLM factory (OpenRouter / Groq)
 │   │   │   ├── config.py       # pydantic-settings Environment Management
 │   │   │   ├── models.py       # Pydantic v2 Domain Data Contracts
 │   │   │   ├── graph/          # LangGraph StateGraph Orchestration
@@ -79,10 +81,8 @@ testpilot-ai/
 │   │   ├── tests/              # Pytest Suite
 │   │   └── requirements.txt
 │   └── frontend/               # Next.js 16 + Tailwind CSS Dark Obsidian Dashboard
-├── docs/
-│   └── architecture.md         # Full System Architecture & Data Flow
 ├── README.md
-│   └── .gitignore
+└── .gitignore
 ```
 
 ---
@@ -100,7 +100,9 @@ testpilot-ai/
 * **Scoped Re-execution**: During repair cycles, only repaired tests are re-run — passing tests are preserved via the merge reducer.
 * **Live Page Inspection**: Scans active website DOM trees and extracts the Playwright Accessibility Tree (AOM) for semantic element discovery.
 * **Code Static Analysis**: Analyzes frameworks, routing files, schema validation, API requests, and state management patterns.
-* **Centralized LLM Configuration**: Configurable Groq model (`openai/gpt-oss-120b` default) powering reasoning across planning, generation, analysis, and repair.
+* **Durable SQLite Persistence**: All projects, test runs, and test cases are persisted to a local SQLite database (`app/db.py`) — state survives backend restarts and duplicate server instances. Project deletion cascades to runs and test cases.
+* **Run Lifecycle Controls**: Cancel in-flight pipeline runs via `POST /api/test-runs/run/{id}/cancel` (graceful asyncio task cancellation with terminal-state reconciliation for stale runs) or delete them; both exposed in the dashboard.
+* **Centralized LLM Configuration**: Provider-agnostic LLM factory (`app/llm.py`) using OpenRouter as the default provider (reasoning-first model) with Groq as a fallback — configured entirely via environment variables (`OPENROUTER_API_KEY` / `GROQ_API_KEY`), never hardcoded.
 * **GitHub PR Integration**: Submits PRs with test results summary, auto-repair report, and suspected application bug documentation.
 
 ---

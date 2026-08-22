@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { Clock, Play, CheckCircle2, XCircle, ChevronRight, Trash2 } from "lucide-react";
+import { Clock, Play, CheckCircle2, XCircle, ChevronRight, Trash2, Square, AlertTriangle } from "lucide-react";
 import { api, getErrorMessage, type TestRun } from "../../../lib/api";
 
 const STATUS_STYLES: Record<string, { icon: typeof CheckCircle2; color: string; label: string }> = {
@@ -11,7 +11,12 @@ const STATUS_STYLES: Record<string, { icon: typeof CheckCircle2; color: string; 
   executing: { icon: Play, color: "var(--accent)", label: "Running" },
   pending: { icon: Clock, color: "var(--warning)", label: "Pending" },
   analyzing: { icon: Play, color: "var(--accent)", label: "Analyzing" },
+  cancelled: { icon: XCircle, color: "var(--text-muted)", label: "Cancelled" },
+  cancelling: { icon: Clock, color: "var(--warning)", label: "Cancelling..." },
+  completed_with_failures: { icon: AlertTriangle, color: "var(--warning)", label: "Partial Failures" },
 };
+
+const ACTIVE_RUN_STATUSES = new Set(["analyzing", "pending", "executing", "cancelling"]);
 
 interface RunWithProject extends TestRun {
   projectName: string;
@@ -47,7 +52,7 @@ export default function RunsPage() {
     loadAllRuns();
   }, []);
 
-  const handleDeleteRun = async (runId: string) => {
+    const handleDeleteRun = async (runId: string) => {
     if (confirm("Are you sure you want to delete this test run? This cannot be undone.")) {
       try {
         await api.deleteRun(runId);
@@ -55,6 +60,15 @@ export default function RunsPage() {
       } catch (err: unknown) {
         alert(getErrorMessage(err, "Failed to delete test run."));
       }
+    }
+  };
+
+  const handleCancelRun = async (runId: string) => {
+    try {
+      await api.cancelRun(runId);
+      setRuns((prev) => prev.map((r) => (r.id === runId ? { ...r, status: "cancelling" as const } : r)));
+    } catch (err: unknown) {
+      alert(getErrorMessage(err, "Failed to cancel test run."));
     }
   };
 
@@ -132,7 +146,7 @@ export default function RunsPage() {
                   </div>
                 </div>
 
-                <div className="flex items-center gap-4">
+                                <div className="flex items-center gap-4">
                   <span className="text-xs font-semibold px-2 py-0.5 rounded border" style={{
                     borderColor: statusConfig.color,
                     color: statusConfig.color,
@@ -141,6 +155,27 @@ export default function RunsPage() {
                   }}>
                     {statusConfig.label}
                   </span>
+                  {ACTIVE_RUN_STATUSES.has(run.status) && (
+                    <button
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        handleCancelRun(run.id);
+                      }}
+                      disabled={run.status === "cancelling"}
+                      className="p-1.5 rounded transition-colors cursor-pointer flex items-center justify-center"
+                      style={{ color: "var(--warning)", background: "transparent", border: "none", opacity: run.status === "cancelling" ? 0.4 : 1 }}
+                      onMouseEnter={(e) => {
+                        if (!e.currentTarget.disabled) e.currentTarget.style.background = "rgba(245,158,11,0.1)";
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.background = "transparent";
+                      }}
+                      title="Cancel Run"
+                    >
+                      <Square size={14} />
+                    </button>
+                  )}
                   <button
                     onClick={(e) => {
                       e.preventDefault();

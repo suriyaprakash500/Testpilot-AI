@@ -1,4 +1,4 @@
-import logging
+﻿import logging
 from typing import Dict, Any, List
 from app.graph.state import TestPilotState
 from app.config import settings
@@ -19,7 +19,7 @@ def _build_segregation_prompt(understanding: dict, inspections: list) -> str:
     if features:
         lines.append("\nIdentified features:")
         for f in features:
-            lines.append(f"  - {f['name']} (importance: {f.get('importance', 'medium')}) — {f.get('evidence', '')}")
+            lines.append(f"  - {f['name']} (importance: {f.get('importance', 'medium')}) â€” {f.get('evidence', '')}")
 
     user_flows = understanding.get("user_flows", [])
     if user_flows:
@@ -70,14 +70,10 @@ def _build_segregation_prompt(understanding: dict, inspections: list) -> str:
 
 async def _llm_segregate_features(prompt_context: str) -> Dict[str, List[Dict[str, Any]]]:
     """Asks the LLM to map features to routes with concrete element selectors."""
-    from langchain_groq import ChatGroq
+    from app.llm import get_llm
     import json
 
-    llm = ChatGroq(
-        model=settings.groq_model,
-        api_key=settings.groq_api_key,
-        temperature=0.2,
-    )
+    llm = get_llm(temperature=0.2)
 
     prompt = f"""You are a senior QA engineer organizing test coverage for a web application.
 

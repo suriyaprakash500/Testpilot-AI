@@ -23,3 +23,14 @@ data/
 
 # Test run screenshot artifacts
 apps/backend/*.png
+
+# Session notes & private docs (never publish)
+memory.md
+docs/
+
+# Local databases
+*.db
+*.sqlite3
+
+# Local screenshots
+Screenshot*.png

@@ -1,4 +1,4 @@
-import logging
+﻿import logging
 import json
 from typing import Dict, Any, List
 from app.graph.state import TestPilotState
@@ -98,13 +98,9 @@ def _find_page_inspection(route: str, inspections: list) -> dict:
 
 async def _llm_analyze_failure(context: str) -> Dict[str, Any]:
     """Sends the failure context to the LLM for root cause classification."""
-    from langchain_groq import ChatGroq
+    from app.llm import get_llm
 
-    llm = ChatGroq(
-        model=settings.groq_model,
-        api_key=settings.groq_api_key,
-        temperature=0.1,
-    )
+    llm = get_llm(temperature=0.1)
 
     prompt = f"""You are a senior QA engineer analyzing a failed end-to-end Playwright test.
 
@@ -116,10 +112,10 @@ Your task: determine the ROOT CAUSE of the failure.
 
 Classify the root cause into exactly ONE of these categories:
 
-1. "selector_wrong" — The generated locator (CSS selector, role, text) does not match the actual DOM element. The element exists but with a different name, role, or identifier.
-2. "timing_issue" — The element exists but was not ready when the assertion ran. The test needs explicit waits or the page loads asynchronously.
-3. "test_assumption_wrong" — The test logic is incorrect: wrong navigation flow, wrong expected value, or wrong sequence of interactions.
-4. "application_bug" — The application itself is broken. The test correctly describes the expected behavior, but the app does not fulfill it (state not updated, API error, missing feature, visual regression).
+1. "selector_wrong" â€” The generated locator (CSS selector, role, text) does not match the actual DOM element. The element exists but with a different name, role, or identifier.
+2. "timing_issue" â€” The element exists but was not ready when the assertion ran. The test needs explicit waits or the page loads asynchronously.
+3. "test_assumption_wrong" â€” The test logic is incorrect: wrong navigation flow, wrong expected value, or wrong sequence of interactions.
+4. "application_bug" â€” The application itself is broken. The test correctly describes the expected behavior, but the app does not fulfill it (state not updated, API error, missing feature, visual regression).
 
 CRITICAL RULE: Only classify as "application_bug" if the test is logically correct and the application genuinely fails to meet the expected behavior. Do NOT classify infrastructure/env issues as app bugs.
 

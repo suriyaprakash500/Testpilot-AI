@@ -1,4 +1,4 @@
-import logging
+﻿import logging
 from typing import Dict, Any
 from app.graph.state import TestPilotState
 from app.config import settings
@@ -77,13 +77,9 @@ def _build_context_summary(inspections: list, code_info: dict, repo_info: dict) 
 
 async def _llm_understand_app(context_summary: str) -> Dict[str, Any]:
     """Sends the accumulated evidence to Groq LLM for QA reasoning."""
-    from langchain_groq import ChatGroq
+    from app.llm import get_llm
 
-    llm = ChatGroq(
-        model=settings.groq_model,
-        api_key=settings.groq_api_key,
-        temperature=0.2,
-    )
+    llm = get_llm(temperature=0.2)
 
     prompt = f"""You are a senior QA engineer analyzing a web application before writing tests.
 
@@ -228,7 +224,7 @@ async def app_understanding_node(state: TestPilotState) -> Dict[str, Any]:
         "messages": [{
             "role": "assistant",
             "content": (f"Application understood: {understanding.get('app_name', 'App')} "
-                        f"({understanding.get('app_type', 'web app')}) — "
+                        f"({understanding.get('app_type', 'web app')}) â€” "
                         f"{len(understanding.get('testable_features', []))} testable features identified.")
         }]
     }

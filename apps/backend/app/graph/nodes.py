@@ -1,4 +1,4 @@
-import logging
+﻿import logging
 import uuid
 import time
 from typing import Dict, Any, List, Optional
@@ -104,7 +104,7 @@ def _build_test_planning_evidence(
                 actions = entry.get("test_actions", [])
                 lines.append(f"    - Route: {route} (type: {page_type})")
                 for act in actions:
-                    lines.append(f"      • Action hint: {act.get('description', '')} on {act.get('element_type', 'element')} '{act.get('element_identifier', '')}'")
+                    lines.append(f"      â€¢ Action hint: {act.get('description', '')} on {act.get('element_type', 'element')} '{act.get('element_identifier', '')}'")
 
     if inspections:
         lines.append("\nDiscovered Live Page Inspections & Elements:")
@@ -153,13 +153,9 @@ def _build_test_planning_evidence(
 
 async def _llm_generate_test_plan(evidence_text: str) -> Optional[dict]:
     """Calls Groq LLM with expert QA Test Planning prompt to output natural language plans."""
-    from langchain_groq import ChatGroq
+    from app.llm import get_llm
 
-    llm = ChatGroq(
-        model=settings.groq_model,
-        api_key=settings.groq_api_key,
-        temperature=0.2,
-    )
+    llm = get_llm(temperature=0.2)
 
     prompt = f"""You are an expert QA Test Planning Agent in an autonomous web application testing system.
 
@@ -499,13 +495,9 @@ async def _llm_generate_playwright_steps(
     scenarios: list, inspections_context: str, website_url: str
 ) -> Optional[dict]:
     """Calls Groq LLM to ground natural language scenarios into executable JSON steps and Playwright code."""
-    from langchain_groq import ChatGroq
+    from app.llm import get_llm
 
-    llm = ChatGroq(
-        model=settings.groq_model,
-        api_key=settings.groq_api_key,
-        temperature=0.1,
-    )
+    llm = get_llm(temperature=0.1)
 
     scenarios_input = []
     for sc in scenarios:
@@ -874,12 +866,12 @@ async def browser_execution_node(state: TestPilotState) -> Dict[str, Any]:
 
     results: List[Dict[str, Any]] = []
 
-    # Get credentials if stored in projects_db
+        # Get test credentials from the persisted project record
     test_email = None
     test_password = None
     try:
-        from app.api.projects import projects_db
-        project = next((p for p in projects_db if p["id"] == project_id), None)
+        from app.db import get_project as db_get_project
+        project = db_get_project(project_id)
         if project:
             test_email = project.get("testEmail")
             test_password = project.get("testPassword")
@@ -976,7 +968,7 @@ async def github_pr_node(state: TestPilotState) -> Dict[str, Any]:
     logger.info(f"[Node: github_pr] Creating GitHub PR for {repo_url}")
 
     # Build PR body with evaluation summary and app bug documentation
-    pr_body_parts = ["## TestPilot AI — Automated E2E Test Suite\n"]
+    pr_body_parts = ["## TestPilot AI â€” Automated E2E Test Suite\n"]
 
     # Evaluation summary
     if evaluation_results:
@@ -986,16 +978,16 @@ async def github_pr_node(state: TestPilotState) -> Dict[str, Any]:
         pr_body_parts.append(f"### Test Results")
         pr_body_parts.append(f"| Metric | Count |")
         pr_body_parts.append(f"|--------|-------|")
-        pr_body_parts.append(f"| ✅ Passed | {pass_count} |")
-        pr_body_parts.append(f"| ❌ Failed | {fail_count} |")
-        pr_body_parts.append(f"| ⚠️ Inconclusive | {inconclusive_count} |")
+        pr_body_parts.append(f"| âœ… Passed | {pass_count} |")
+        pr_body_parts.append(f"| âŒ Failed | {fail_count} |")
+        pr_body_parts.append(f"| âš ï¸ Inconclusive | {inconclusive_count} |")
         pr_body_parts.append("")
 
     # Auto-repaired tests summary
     if repair_attempts:
         repaired_tests = [tid for tid, count in repair_attempts.items() if count > 0]
         if repaired_tests:
-            pr_body_parts.append(f"### 🔧 Auto-Repaired Tests ({len(repaired_tests)})")
+            pr_body_parts.append(f"### ðŸ”§ Auto-Repaired Tests ({len(repaired_tests)})")
             pr_body_parts.append("| Test | Repair Attempts |")
             pr_body_parts.append("|------|----------------|")
             for test_id in repaired_tests:
@@ -1004,7 +996,7 @@ async def github_pr_node(state: TestPilotState) -> Dict[str, Any]:
 
     # Suspected application bugs (most prominent section)
     if suspected_app_bugs:
-        pr_body_parts.append(f"### 🐛 Suspected Application Bugs ({len(suspected_app_bugs)})")
+        pr_body_parts.append(f"### ðŸ› Suspected Application Bugs ({len(suspected_app_bugs)})")
         pr_body_parts.append("")
         pr_body_parts.append("> **These failures were classified as application defects, not test defects.**")
         pr_body_parts.append("> The test correctly describes expected behavior, but the application did not fulfill it.")

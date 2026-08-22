@@ -1,7 +1,14 @@
+
+import os
+
 import pytest
 from app.graph.pipeline import run_pipeline
 
 @pytest.mark.asyncio
+@pytest.mark.skipif(
+    os.getenv("TESTPILOT_E2E", "").lower() not in ("1", "true"),
+    reason="Full-pipeline integration test (network + browser + live LLM). Set TESTPILOT_E2E=1 to run.",
+)
 async def test_langgraph_pipeline_execution():
     project_id = "test-proj-1"
     run_id = "test-run-1"

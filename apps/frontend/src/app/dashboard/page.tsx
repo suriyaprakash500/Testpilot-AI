@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { Plus, GitBranch, ChevronRight, AlertTriangle, ExternalLink, Layers } from "lucide-react";
+import { Plus, GitBranch, ChevronRight, AlertTriangle, ExternalLink, Layers, Trash2 } from "lucide-react";
 import { api, getErrorMessage, type Project, type AnalyticsData } from "../../lib/api";
 
 function formatTimeSaved(milliseconds: number): string {
@@ -84,6 +84,17 @@ export default function DashboardPage() {
       setModalError(getErrorMessage(err, "Failed to create project."));
     } finally {
       setCreating(false);
+    }
+  };
+
+  const handleDeleteProject = async (projectId: string, projectName: string) => {
+    if (confirm(`Delete "${projectName}"? This will permanently remove the project along with all of its test runs and history.`)) {
+      try {
+        await api.deleteProject(projectId);
+        setProjectsList((prev) => prev.filter((p) => p.id !== projectId));
+      } catch (err: unknown) {
+        alert(getErrorMessage(err, "Failed to delete project."));
+      }
     }
   };
 
@@ -212,7 +223,29 @@ export default function DashboardPage() {
                   </div>
                 </div>
 
-                <ChevronRight size={14} style={{ color: "var(--text-muted)" }} />
+                                <div className="flex items-center gap-4">
+                  <button
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      handleDeleteProject(project.id, project.name);
+                    }}
+                    className="p-1.5 rounded transition-colors cursor-pointer flex items-center justify-center"
+                    style={{ color: "var(--text-muted)", background: "transparent", border: "none" }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.color = "var(--error)";
+                      e.currentTarget.style.background = "rgba(239,68,68,0.1)";
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.color = "var(--text-muted)";
+                      e.currentTarget.style.background = "transparent";
+                    }}
+                    title="Delete Project"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                  <ChevronRight size={14} style={{ color: "var(--text-muted)" }} />
+                </div>
               </Link>
             ))}
           </div>

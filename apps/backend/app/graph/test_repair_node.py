@@ -1,4 +1,4 @@
-import logging
+﻿import logging
 import json
 from typing import Dict, Any, List
 from app.graph.state import TestPilotState
@@ -98,13 +98,9 @@ async def _llm_repair_test(repair_context: str, root_cause: str) -> list:
     Returns a list of step dicts in the format consumed by browser_execution_node:
     [{"action": "navigate", "value": "..."}, {"action": "assert_visible", ...}]
     """
-    from langchain_groq import ChatGroq
+    from app.llm import get_llm
 
-    llm = ChatGroq(
-        model=settings.groq_model,
-        api_key=settings.groq_api_key,
-        temperature=0.2,
-    )
+    llm = get_llm(temperature=0.2)
 
     repair_strategies = {
         "selector_wrong": (
@@ -147,7 +143,7 @@ RULES:
 2. If the error was a Playwright strict mode violation (multiple elements matched), scope to a parent container (`"parent_selector"`, `"parent_text"`) or set `"first": true` / `"nth": <index>`.
 3. Use ONLY elements that exist in the "Actual page elements" section above.
 4. Do NOT invent selectors or element names that were not in the evidence.
-5. Keep the original test intent — do NOT remove assertions to force a pass.
+5. Keep the original test intent â€” do NOT remove assertions to force a pass.
 
 Return ONLY the JSON array. No markdown fences, no explanation."""
 

@@ -8,6 +8,10 @@ class Settings(BaseSettings):
     backend_url: str = "http://localhost:3001"
     frontend_url: str = "http://localhost:3000"
     
+            # LLM provider: "openrouter" | "groq"
+    llm_provider: str = Field(default="openrouter")
+    llm_model: str = Field(default="stealth/ox-alpha")
+    openrouter_api_key: str = Field(default="")
     groq_api_key: str = Field(default="dummy-groq-key")
     groq_model: str = Field(default="openai/gpt-oss-120b")
     jwt_secret: str = Field(default="super-secret-jwt-key-min-32-characters")
