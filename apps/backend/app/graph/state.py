@@ -56,3 +56,8 @@ class TestPilotState(TypedDict):
     suspected_app_bugs: Annotated[List[dict], add]
     # Test IDs to execute in the next cycle (None = execute all)
     tests_to_execute: Optional[List[str]]
+
+    # --- Live Verify (pre-execution selector validation) ---
+    # Per-test live DOM verification report:
+    # { test_id: { status, route, confirmedSteps, corrections, unconfirmedSelectors } }
+    live_verifications: Annotated[Dict[str, dict], merge_dicts]

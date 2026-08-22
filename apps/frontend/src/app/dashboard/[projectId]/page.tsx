@@ -9,12 +9,13 @@ import {
   XCircle, 
   AlertTriangle, 
   ChevronRight, 
-    ArrowLeft,
+  ArrowLeft,
   Trash2,
   Square,
   Wrench,
   RefreshCw,
-  GitPullRequest
+  GitPullRequest,
+  ShieldCheck
 } from "lucide-react";
 import { api, getErrorMessage, type Project, type TestRun, type UpdateProjectInput } from "../../../lib/api";
 
@@ -28,6 +29,7 @@ const STATUS_STYLES: Record<string, { icon: typeof CheckCircle2; color: string; 
   analyzing_failures: { icon: AlertTriangle, color: "var(--warning)", label: "Triaging Failures" },
   repairing: { icon: Wrench, color: "var(--warning)", label: "Auto-Repairing" },
   retrying: { icon: RefreshCw, color: "var(--accent)", label: "Retrying" },
+  live_verify: { icon: ShieldCheck, color: "#38bdf8", label: "Live Verify" },
   creating_pr: { icon: GitPullRequest, color: "var(--success)", label: "Creating PR" },
   cancelled: { icon: XCircle, color: "var(--text-muted)", label: "Cancelled" },
   cancelling: { icon: Clock, color: "var(--warning)", label: "Cancelling..." },
@@ -42,6 +44,7 @@ const ACTIVE_RUN_STATUSES = new Set([
   "analyzing_failures",
   "repairing",
   "retrying",
+  "live_verify",
   "creating_pr",
   "cancelling",
 ]);

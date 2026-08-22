@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { use, useState, useEffect } from "react";
-import { ArrowLeft, CheckCircle2, XCircle, Trash2, Terminal, Code, Copy, Check, ListChecks, Wrench, Bug, RefreshCw } from "lucide-react";
+import { ArrowLeft, CheckCircle2, XCircle, Trash2, Terminal, Code, Copy, Check, ListChecks, Wrench, Bug, RefreshCw, ShieldCheck } from "lucide-react";
 import { api, getErrorMessage, type TestRun, type TestCase, type TimelineEvent } from "../../../../../lib/api";
 
 const TERMINAL_STATUSES = ["completed", "completed_with_failures", "failed", "cancelled"];
@@ -21,6 +21,7 @@ const PIPELINE_STAGES: PipelineStage[] = [
   { label: "App Understanding", statuses: ["app_understanding"] },
   { label: "Test Planning", statuses: ["test_planning"] },
   { label: "Playwright Gen", statuses: ["playwright_gen"] },
+  { label: "Live Verify", statuses: ["live_verify"] },
   { label: "Execution", statuses: ["execution"] },
   { label: "Evaluation", statuses: ["evaluating"] },
   { label: "Triage & Repair", statuses: ["analyzing_failures", "repairing", "retrying"] },
@@ -159,7 +160,7 @@ export default function RunDetailPage({
     );
   }
 
-    const passed = testCases.filter((t) => t.status === "passed").length;
+  const passed = testCases.filter((t) => t.status === "passed").length;
   const failed = testCases.filter((t) => t.status === "failed").length;
   const total = testCases.length;
   const selectedCase = testCases.find((tc) => tc.id === selectedCaseId) || testCases[0];
@@ -176,10 +177,17 @@ export default function RunDetailPage({
   const timeline = parseTimeline(run.timeline);
   const hasSummary = run.plannedTotal != null || run.passedFinal != null;
 
+  // Live Verify counters (pre-execution selector validation against the live DOM)
+  const liveVerifiedCount = run.liveVerifiedCount ?? 0;
+  const liveCorrectedCount = run.liveCorrectedCount ?? 0;
+  const liveUnverifiedCount = run.liveUnverifiedCount ?? 0;
+  const liveConfirmedTotal = liveVerifiedCount + liveCorrectedCount;
+
   const summaryStats = [
     { label: "Tests Created", value: plannedTotal, color: "#a78bfa", icon: ListChecks },
     { label: "Passed", value: passedFinal, color: "var(--success)", icon: CheckCircle2 },
     { label: "Failed", value: failedFinal, color: "var(--error)", icon: XCircle },
+    { label: "Live Verified", value: liveConfirmedTotal, color: "#38bdf8", icon: ShieldCheck },
     { label: "Auto-Fixed", value: repairedCount, color: "#38bdf8", icon: Wrench },
     { label: "App Bugs", value: appBugCount, color: "var(--warning)", icon: Bug },
     { label: "Retries", value: retryCount, color: "var(--text-muted)", icon: RefreshCw },
@@ -232,9 +240,9 @@ export default function RunDetailPage({
         </div>
       </div>
 
-            {/* Run Summary Stats */}
+      {/* Run Summary Stats */}
       {(hasSummary || TERMINAL_STATUSES.includes(run.status)) && (
-        <div className="grid gap-3 flex-shrink-0" style={{ gridTemplateColumns: "repeat(6, minmax(0, 1fr))" }}>
+        <div className="grid gap-3 flex-shrink-0" style={{ gridTemplateColumns: "repeat(7, minmax(0, 1fr))" }}>
           {summaryStats.map((stat) => (
             <div key={stat.label} className="glass p-3 flex flex-col gap-1.5">
               <div className="flex items-center gap-1.5">
@@ -249,6 +257,13 @@ export default function RunDetailPage({
               {stat.label === "Failed" && failedFirstPass != null && failedFirstPass > failedFinal && (
                 <span className="text-[9px] font-mono" style={{ color: "var(--text-muted)" }}>
                   {failedFirstPass} on first pass
+                </span>
+              )}
+              {stat.label === "Live Verified" && (liveCorrectedCount > 0 || liveUnverifiedCount > 0) && (
+                <span className="text-[9px] font-mono truncate" style={{ color: "var(--text-muted)" }} title={`${liveCorrectedCount} selectors auto-corrected, ${liveUnverifiedCount} unconfirmed`}>
+                  {liveCorrectedCount > 0 && `${liveCorrectedCount} sel. fixed`}
+                  {liveCorrectedCount > 0 && liveUnverifiedCount > 0 && " · "}
+                  {liveUnverifiedCount > 0 && `${liveUnverifiedCount} unconf.`}
                 </span>
               )}
             </div>

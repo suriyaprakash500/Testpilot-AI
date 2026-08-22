@@ -78,6 +78,7 @@ export type RunStatus =
   | "app_understanding"
   | "test_planning"
   | "playwright_gen"
+  | "live_verify"
   | "execution"
   | "executing"
   | "evaluating"
@@ -116,6 +117,9 @@ export interface TestRun {
   repairedCount?: number | null;
   appBugCount?: number | null;
   retryCount?: number | null;
+  liveVerifiedCount?: number | null;
+  liveCorrectedCount?: number | null;
+  liveUnverifiedCount?: number | null;
   timeline?: TimelineEvent[] | string | null;
 }
 
@@ -243,7 +247,7 @@ export const api = {
     return response.data;
   },
 
-    deleteRun: async (runId: string): Promise<void> => {
+  deleteRun: async (runId: string): Promise<void> => {
     await fetchApi<{ deleted: boolean }>(`/api/test-runs/run/${runId}`, {
       method: "DELETE",
     });

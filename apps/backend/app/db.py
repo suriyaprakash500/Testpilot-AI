@@ -40,6 +40,9 @@ CREATE TABLE IF NOT EXISTS runs (
     repairedCount INTEGER,
     appBugCount INTEGER,
     retryCount INTEGER,
+    liveVerifiedCount INTEGER,
+    liveCorrectedCount INTEGER,
+    liveUnverifiedCount INTEGER,
     timeline TEXT
 );
 CREATE TABLE IF NOT EXISTS test_cases (
@@ -68,6 +71,9 @@ _RUN_MIGRATION_COLUMNS = [
     ("repairedCount", "INTEGER"),
     ("appBugCount", "INTEGER"),
     ("retryCount", "INTEGER"),
+    ("liveVerifiedCount", "INTEGER"),
+    ("liveCorrectedCount", "INTEGER"),
+    ("liveUnverifiedCount", "INTEGER"),
     ("timeline", "TEXT"),
 ]
 

@@ -22,6 +22,7 @@ from app.graph.test_evaluation_node import test_evaluation_node
 from app.graph.failure_analysis_node import failure_analysis_node
 from app.graph.test_repair_node import test_repair_node
 from app.graph.inconclusive_retry_node import inconclusive_retry_node
+from app.graph.live_verify_node import live_verify_node
 from app.graph.edges import (
     route_after_auth,
     route_after_evaluation,
@@ -52,6 +53,7 @@ def build_pipeline():
     graph.add_node("feature_segregation", feature_segregation_node)
     graph.add_node("test_planning", test_planning_node)
     graph.add_node("playwright_gen", playwright_gen_node)
+    graph.add_node("live_verify", live_verify_node)
     graph.add_node("browser_execution", browser_execution_node)
     graph.add_node("abort", abort_node)
 
@@ -72,7 +74,10 @@ def build_pipeline():
     graph.add_edge("app_understanding", "feature_segregation")
     graph.add_edge("feature_segregation", "test_planning")
     graph.add_edge("test_planning", "playwright_gen")
-    graph.add_edge("playwright_gen", "browser_execution")
+    # Live Verify: validate generated selectors against the live DOM
+    # before any full execution (pre-delivery grounding).
+    graph.add_edge("playwright_gen", "live_verify")
+    graph.add_edge("live_verify", "browser_execution")
 
     # Feedback loop: execution -> evaluation -> analysis/retry -> repair -> execution
     graph.add_edge("browser_execution", "test_evaluation")
@@ -117,6 +122,7 @@ NODE_STATUS_MAP = {
     "feature_segregation": "app_understanding",
     "test_planning": "test_planning",
     "playwright_gen": "playwright_gen",
+    "live_verify": "live_verify",
     "browser_execution": "execution",
     "test_evaluation": "evaluating",
     "failure_analysis": "analyzing_failures",
@@ -162,7 +168,9 @@ async def run_pipeline(
         "inconclusive_retries": {},
         "repaired_tests": {},
         "suspected_app_bugs": [],
-                "tests_to_execute": None,
+        "tests_to_execute": None,
+        # Live Verify (pre-execution selector validation)
+        "live_verifications": {},
     }
 
     config = {
@@ -206,6 +214,7 @@ async def run_pipeline(
     # of TestPilotState and never flow back into the graph.
     final_results = final_state.get("execution_results") or []
     repair_attempts = final_state.get("repair_attempts") or {}
+    live_verifications = final_state.get("live_verifications") or {}
     final_state["run_summary"] = {
         "plannedTotal": len(final_state.get("test_plan") or []),
         "passedFirstPass": (first_pass_stats or {}).get("passed"),
@@ -216,6 +225,9 @@ async def run_pipeline(
         "repairedCount": sum(1 for v in repair_attempts.values() if v > 0),
         "appBugCount": len(final_state.get("suspected_app_bugs") or []),
         "retryCount": sum(1 for v in (final_state.get("inconclusive_retries") or {}).values() if v > 0),
+        "liveVerifiedCount": sum(1 for v in live_verifications.values() if v.get("status") == "verified"),
+        "liveCorrectedCount": sum(1 for v in live_verifications.values() if v.get("status") == "corrected"),
+        "liveUnverifiedCount": sum(1 for v in live_verifications.values() if v.get("status") == "unverified"),
     }
     final_state["timeline"] = timeline
 

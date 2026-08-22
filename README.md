@@ -26,7 +26,8 @@ flowchart TD
         end
 
         subgraph Feedback["Feedback Loop"]
-            GEN --> EXEC["9. browser_execution_node"]
+            GEN --> LV["8b. live_verify_node"]
+            LV --> EXEC["9. browser_execution_node"]
             EXEC --> EVAL["10. test_evaluation_node"]
             EVAL -->|ALL PASS| PR["13. github_pr_node"]
             EVAL -->|HAS FAILURES| FAIL_A["11. failure_analysis_node"]
@@ -72,6 +73,7 @@ testpilot-ai/
 │   │   │   │   ├── code_analysis_node.py      # Static code analysis
 │   │   │   │   ├── app_understanding_node.py  # LLM domain reasoning
 │   │   │   │   ├── feature_segregation_node.py # SPA feature grouping
+│   │   │   │   ├── live_verify_node.py        # Pre-execution live DOM selector validation
 │   │   │   │   ├── test_evaluation_node.py    # Deterministic test evaluation
 │   │   │   │   ├── failure_analysis_node.py   # LLM root cause classification
 │   │   │   │   ├── test_repair_node.py        # LLM test repair (max 3 attempts)
@@ -92,6 +94,7 @@ testpilot-ai/
 * **LangGraph `StateGraph` Orchestration**: Checkpointed, stateful agent pipeline with feedback loops for test repair and retry.
 * **LLM Natural Language Test Planning**: Expert QA planning agent analyzes discovered application context to produce comprehensive test plans (happy paths, validations, negative scenarios, boundary conditions, edge cases) with priority ratings (`critical`, `high`, `medium`).
 * **AOM-Grounded Playwright Code Generation**: Translates natural-language plans into concrete, structured JSON execution steps and clean Python Playwright suites grounded in live Accessibility Trees (AOM / `aria_snapshot`) and DOM elements.
+* **Live Verify**: Deterministic pre-execution gate (`live_verify_node`) that validates every generated selector (click / fill / assert targets) against the ground-truth live DOM captured during page inspection. Hallucinated selectors are auto-corrected via fuzzy matching to the closest real element; unconfirmable selectors are flagged for runtime triage — the pipeline never executes against unproven selectors silently.
 * **ProactorEventLoop Thread Isolation**: Dedicated `playwright_runner` executes browser automation in a separate Proactor thread, preventing event loop subprocess conflicts with Uvicorn on Windows.
 * **Feedback-Loop Test Repair**: Failed tests are evaluated, classified by root cause (selector wrong, timing issue, test assumption wrong, or application bug), and automatically repaired up to 3 times with structured step updates.
 * **Application Bug Detection**: Tests classified as application bugs are documented in the PR body with evidence — the system never weakens assertions to mask real defects.
