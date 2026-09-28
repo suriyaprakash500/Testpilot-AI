@@ -1,6 +1,6 @@
-# TestPilot AI
+# Verity
 
-> Autonomous, AI-native QA engineering platform powered by a **Python FastAPI + LangGraph StateGraph Agentic Engine** with **feedback-loop test repair** and a **React Dashboard**.
+> Agentic Test Engineering Platform powered by a **Python FastAPI + LangGraph StateGraph Agentic Engine** with **feedback-loop test repair** and a **React Dashboard**.
 
 ---
 
@@ -18,21 +18,19 @@ flowchart TD
             AUTH -->|pass| REPO["2. repo_analysis_node"]
             AUTH -->|fail| ABORT["abort_node"]
             REPO --> INSP["3. page_inspection_node"]
-            INSP --> CODE["4. code_analysis_node"]
-            CODE --> UND["5. app_understanding_node"]
-            UND --> SEG["6. feature_segregation_node"]
-            SEG --> PLAN["7. test_planning_node"]
-            PLAN --> GEN["8. playwright_gen_node"]
+            INSP --> AF["4. app_feature_analysis_node"]
+            AF --> PLAN["5. test_planning_node"]
+            PLAN --> GEN["6. playwright_gen_node"]
         end
 
         subgraph Feedback["Feedback Loop"]
-            GEN --> LV["8b. live_verify_node"]
-            LV --> EXEC["9. browser_execution_node"]
-            EXEC --> EVAL["10. test_evaluation_node"]
-            EVAL -->|ALL PASS| PR["13. github_pr_node"]
-            EVAL -->|HAS FAILURES| FAIL_A["11. failure_analysis_node"]
-            EVAL -->|INCONCLUSIVE| INCONC["12. inconclusive_retry_node"]
-            FAIL_A -->|repairable| REPAIR["11b. test_repair_node"]
+            GEN --> LV["6b. live_verify_node"]
+            LV --> EXEC["7. browser_execution_node"]
+            EXEC --> EVAL["8. test_evaluation_node"]
+            EVAL -->|ALL PASS| PR["11. github_pr_node"]
+            EVAL -->|HAS FAILURES| FAIL_A["9. failure_analysis_node"]
+            EVAL -->|INCONCLUSIVE| INCONC["10. inconclusive_retry_node"]
+            FAIL_A -->|repairable| REPAIR["9b. test_repair_node"]
             FAIL_A -->|app bug / max retries| PR
             REPAIR --> EXEC
             INCONC -->|retries left| EXEC
@@ -58,10 +56,13 @@ testpilot-ai/
 │   ├── backend/                # Python FastAPI + LangGraph Backend
 │   │   ├── app/
 │   │   │   ├── main.py         # FastAPI REST Endpoint
-│   │   │   ├── db.py           # SQLite Persistence (projects, runs, test cases)
-│   │   │   ├── llm.py          # Provider-agnostic LLM factory (OpenRouter / Groq)
-│   │   │   ├── config.py       # pydantic-settings Environment Management
+│   │   │   ├── config.py       # Backward-compatible shim -> app/core/config.py
+│   │   │   ├── db.py           # Backward-compatible shim -> app/repositories/database.py
+│   │   │   ├── llm.py          # Backward-compatible shim -> app/services/llm/
 │   │   │   ├── models.py       # Pydantic v2 Domain Data Contracts
+│   │   │   ├── core/           # Centralized Settings, logging, shared Singleton base
+│   │   │   ├── services/llm/   # LLM provider abstraction + registry + factory + facade
+│   │   │   ├── repositories/   # SQLite Database repository abstraction
 │   │   │   ├── graph/          # LangGraph StateGraph Orchestration
 │   │   │   │   ├── state.py    # TestPilotState TypedDict + merge reducers
 │   │   │   │   ├── nodes.py    # Core Agent Nodes (planning, codegen, exec, PR)
@@ -70,9 +71,7 @@ testpilot-ai/
 │   │   │   │   ├── tools.py    # LangChain @tool Decorated Functions
 │   │   │   │   ├── pipeline.py # StateGraph Assembly & Async Invocation
 │   │   │   │   ├── page_inspection_node.py    # DOM + Accessibility Tree extraction
-│   │   │   │   ├── code_analysis_node.py      # Static code analysis
-│   │   │   │   ├── app_understanding_node.py  # LLM domain reasoning
-│   │   │   │   ├── feature_segregation_node.py # SPA feature grouping
+│   │   │   │   ├── app_feature_analysis_node.py # LLM app reasoning + SPA feature grouping
 │   │   │   │   ├── live_verify_node.py        # Pre-execution live DOM selector validation
 │   │   │   │   ├── test_evaluation_node.py    # Deterministic test evaluation
 │   │   │   │   ├── failure_analysis_node.py   # LLM root cause classification
@@ -102,11 +101,22 @@ testpilot-ai/
 * **Custom Merge Reducers**: Per-test state fields use `Annotated` types with `merge_dicts` reducers to prevent LangGraph's last-write-wins from corrupting data during repair loops.
 * **Scoped Re-execution**: During repair cycles, only repaired tests are re-run — passing tests are preserved via the merge reducer.
 * **Live Page Inspection**: Scans active website DOM trees and extracts the Playwright Accessibility Tree (AOM) for semantic element discovery.
-* **Code Static Analysis**: Analyzes frameworks, routing files, schema validation, API requests, and state management patterns.
+* **Application Understanding & Feature Mapping**: A single LLM pass (`app_feature_analysis_node`) reasons about the application (name, type, purpose, user flows, testable features, critical paths, risks) and simultaneously groups discovered pages into testable feature areas mapped to concrete DOM elements — with a deterministic rule-based fallback.
 * **Durable SQLite Persistence**: All projects, test runs, and test cases are persisted to a local SQLite database (`app/db.py`) — state survives backend restarts and duplicate server instances. Project deletion cascades to runs and test cases.
 * **Run Lifecycle Controls**: Cancel in-flight pipeline runs via `POST /api/test-runs/run/{id}/cancel` (graceful asyncio task cancellation with terminal-state reconciliation for stale runs) or delete them; both exposed in the dashboard.
-* **Centralized LLM Configuration**: Provider-agnostic LLM factory (`app/llm.py`) using OpenRouter as the default provider (reasoning-first model) with Groq as a fallback — configured entirely via environment variables (`OPENROUTER_API_KEY` / `GROQ_API_KEY`), never hardcoded.
+* **Centralized, Provider-Agnostic LLM Service**: All pipeline nodes call a single `LLMService` facade (`app/services/llm/`). Providers (AWS **Bedrock**, OpenRouter, Groq) are registered behind a common interface and selected purely by configuration (`LLM_PROVIDER`) — no node constructs a provider directly and no JSON parsing/fallback is duplicated. Bedrock authenticates via the boto3 provider chain (EC2 IAM role), never hard-coded keys.
 * **GitHub PR Integration**: Submits PRs with test results summary, auto-repair report, and suspected application bug documentation.
+
+### Future Work
+
+* **AST-Based Static Analysis**: The former `code_analysis_node` produced only superficial
+  library-usage flags (framework / auth provider / schema validation / state hooks) and performed a
+  partially dead read (it never set the `components` key the planner looked for), so it was removed.
+  The actionable signals — routes and concrete DOM elements — already come from `repo_analysis` +
+  `page_inspection`. If deeper source-level insight is needed later, it should be reintroduced as an
+  **AST-based** pass (Python `ast` / a TS/JS parser) extracting real component trees, imports, and
+  API call sites to enrich the `app_feature_analysis` evidence, rather than the previous
+  string/regex heuristics. It is intentionally **not** added now.
 
 ---
 
@@ -148,3 +158,30 @@ cd apps/backend
 $env:PYTHONPATH="."  # On Linux/macOS: export PYTHONPATH=.
 pytest tests/test_graph_pipeline.py
 ```
+
+---
+
+## Docker & EC2 Deployment
+
+The backend ships as a Playwright-based Docker image (`Dockerfile.backend`) that
+runs as a non-root user, exposes port `3001`, has a `/api/health` healthcheck,
+and persists SQLite/artifacts/repos on volumes.
+
+```bash
+# Local: build + run backend (SQLite on named volumes)
+docker compose up -d --build
+curl http://localhost:3001/api/health
+
+# EC2 (repeatable deploy: build -> replace container -> health check)
+./deploy/deploy.sh
+```
+
+For the full AWS setup — IAM instance role for Bedrock, SSM Session Manager
+access, Docker install, environment configuration, persistent directories,
+upgrades and troubleshooting — see **[`deploy/EC2.md`](deploy/EC2.md)**.
+
+> Configuration is environment-driven: `LLM_PROVIDER=bedrock` + `AWS_REGION` +
+> `BEDROCK_MODEL_ID` on EC2 (credentials from the IAM role), or
+> `LLM_PROVIDER=openrouter`/`groq` for local development. Copy `.env.example`
+> to `.env` and fill in placeholders — never commit real secrets.
+

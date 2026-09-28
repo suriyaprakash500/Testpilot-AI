@@ -69,7 +69,7 @@ export default function HomePage() {
             <Zap size={18} color="white" />
           </div>
           <span className="text-lg font-semibold" style={{ color: "var(--text-primary)" }}>
-            TestPilot<span style={{ color: "var(--accent)" }}>AI</span>
+            Verity
           </span>
         </div>
         <a
@@ -106,7 +106,7 @@ export default function HomePage() {
             }}
           >
             <span className="w-1.5 h-1.5 rounded-full pulse-dot" style={{ background: "var(--accent)" }} />
-            AI-Powered Testing Platform
+            Agentic Test Engineering Platform
           </div>
 
           <h1
@@ -120,7 +120,7 @@ export default function HomePage() {
           </h1>
 
           <p className="text-lg md:text-xl max-w-2xl mx-auto mb-12" style={{ color: "var(--text-secondary)" }}>
-            Connect your GitHub repo and website. TestPilot AI analyzes your app,
+            Connect your GitHub repo and website. Verity analyzes your app,
             generates Playwright tests, runs them, and delivers debugging insights — automatically.
           </p>
 

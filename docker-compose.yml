@@ -1,54 +1,43 @@
-version: "3.9"
+# TestPilot AI — Docker Compose
+#
+# The application only needs three things to run:
+#   backend (FastAPI + Playwright) + SQLite (persistent volume) + the frontend.
+# Unused services (PostgreSQL, Redis) have been removed — the app does not use them.
+#
+# The backend persists its SQLite database, generated artifacts and cloned
+# repositories on named volumes so data survives `docker compose up -d --build`.
 
 services:
-  postgres:
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_USER: testpilot
-      POSTGRES_PASSWORD: testpilot
-      POSTGRES_DB: testpilot
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U testpilot"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-
-  redis:
-    image: redis:7-alpine
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis_data:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-
   backend:
     build:
       context: .
       dockerfile: Dockerfile.backend
+    image: testpilot-backend:latest
+    container_name: testpilot-backend
     ports:
       - "3001:3001"
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
+    env_file:
+      - .env
     environment:
-      DATABASE_URL: postgresql://testpilot:testpilot@postgres:5432/testpilot
-      REDIS_URL: redis://redis:6379
+      # Override storage paths so they point at the mounted volumes below,
+      # regardless of what is set in .env.
+      DATABASE_PATH: /data/testpilot.db
+      ARTIFACTS_DIR: /artifacts
+      REPOS_DIR: /repos
       BACKEND_PORT: "3001"
       BACKEND_URL: http://localhost:3001
       FRONTEND_URL: http://localhost:3000
-      NODE_ENV: production
-    env_file:
-      - .env
+    volumes:
+      - testpilot_data:/data
+      - testpilot_artifacts:/artifacts
+      - testpilot_repos:/repos
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0) if urllib.request.urlopen('http://localhost:3001/api/health', timeout=5).status == 200 else sys.exit(1)"]
+      interval: 30s
+      timeout: 10s
+      start_period: 40s
+      retries: 3
+    restart: unless-stopped
 
   frontend:
     build:
@@ -62,7 +51,9 @@ services:
       NEXT_PUBLIC_API_URL: http://localhost:3001
     env_file:
       - .env
+    restart: unless-stopped
 
 volumes:
-  postgres_data:
-  redis_data:
+  testpilot_data:
+  testpilot_artifacts:
+  testpilot_repos:

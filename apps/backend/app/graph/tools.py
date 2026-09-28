@@ -7,6 +7,7 @@ import re
 from typing import Dict, Any, List
 from langchain_core.tools import tool
 from playwright.async_api import async_playwright
+from app.config import settings
 
 logger = logging.getLogger("graph-tools")
 
@@ -17,7 +18,7 @@ def analyze_repo_structure(repo_url: str) -> Dict[str, Any]:
     
     # Generate a directory name based on hash of repo_url
     url_hash = hashlib.md5(repo_url.encode()).hexdigest()[:12]
-    repo_dir = os.path.abspath(os.path.join("repos", f"repo_{url_hash}"))
+    repo_dir = os.path.abspath(os.path.join(settings.repos_dir, f"repo_{url_hash}"))
     
     # Clone or pull the repo
     if not os.path.exists(repo_dir):

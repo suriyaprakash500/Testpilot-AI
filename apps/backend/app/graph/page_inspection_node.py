@@ -1,8 +1,37 @@
 import logging
+import re
 from typing import Dict, Any, List
 from app.graph.state import TestPilotState
 from playwright.async_api import async_playwright
-from app.graph.playwright_runner import run_playwright
+from app.graph.playwright_runner import run_playwright, target_slot
+
+# --- SPA post-navigation stabilization (Fix 1) ---
+# ``domcontentloaded`` fires before a SPA's client-side router renders the final
+# view, so an in-app 404 page can be mis-captured as an "unknown" page (and thus
+# treated as a valid route). We wait (bounded) for network idle — which lets the
+# router settle when the app does go idle — then a short fixed settle for
+# frameworks that keep long-lived connections / polling and therefore never
+# reach networkidle. Both waits are bounded; stabilization never aborts a scan.
+NETWORKIDLE_TIMEOUT_MS = 2500
+SETTLE_TIMEOUT_MS = 400
+
+
+def _is_not_found_page(title: str, body_text: str) -> bool:
+    """Heuristically detects the app's own "404 / not found" page.
+
+    SPAs frequently return HTTP 200 while rendering an in-app 404 view, so a
+    successful response status is not sufficient evidence that a route is a
+    real, usable page. Routes that render a not-found view must NOT be treated
+    as verified navigation targets (otherwise the planner grounds tests on
+    routes that only lead to a 404 page).
+    """
+    title_l = (title or "").lower()
+    body_l = (body_text or "").lower()
+    if "404" in title_l or "not found" in title_l:
+        return True
+    if re.search(r"(error\s*404|404\s*error|page\s*not\s*found|does\s*not\s*exist)", body_l):
+        return True
+    return False
 
 logger = logging.getLogger("graph-page-inspection")
 
@@ -84,7 +113,28 @@ def classify_page_type(route: str, metadata: Dict[str, Any]) -> str:
     if route == "/" or route_lower in ["/home", "/index"]:
         return "landing_page"
 
-    return "unknown"
+        return "unknown"
+
+
+async def _stabilize_page(page) -> None:
+    """Bounded post-navigation stabilization before capturing the final DOM.
+
+    A SPA's in-app 404 view is rendered client-side, so the DOM captured
+    immediately after ``domcontentloaded`` can still be the pre-hydration shell.
+    We first wait (bounded) for network idle, then apply a short fixed settle for
+    apps that never reach networkidle (long-lived sockets / polling). Both waits
+    are bounded and swallow errors: stabilization must never abort an inspection.
+    """
+    try:
+        await page.wait_for_load_state("networkidle", timeout=NETWORKIDLE_TIMEOUT_MS)
+    except Exception:
+        # Not an error: SPAs frequently never reach networkidle. The bounded
+        # settle below provides the framework-render window instead.
+        pass
+    try:
+        await page.wait_for_timeout(SETTLE_TIMEOUT_MS)
+    except Exception:
+        pass
 
 
 async def page_inspection_node(state: TestPilotState) -> Dict[str, Any]:
@@ -111,10 +161,15 @@ async def page_inspection_node(state: TestPilotState) -> Dict[str, Any]:
                 try:
                     # Navigate with timeout
                     response = await page.goto(target_url, wait_until="domcontentloaded", timeout=12000)
-                    
+
                     if not response or response.status >= 400:
                         logger.warning(f"[Node: page_inspection] Failed route {route}: Status {response.status if response else 'No Response'}")
                         continue
+
+                    # Wait (bounded) for the client-side router to finish
+                    # rendering BEFORE sampling the DOM, so an in-app 404 view is
+                    # classified correctly instead of as an "unknown" page.
+                    await _stabilize_page(page)
 
                     # Execute script inside page context to get structured elements
                     dom_data = await page.evaluate("""() => {
@@ -129,7 +184,8 @@ async def page_inspection_node(state: TestPilotState) -> Dict[str, Any]:
                             .filter(isVisible)
                             .map(h => ({
                                 tag: h.tagName.toLowerCase(),
-                                text: h.innerText.trim()
+                                text: h.innerText.trim(),
+                                dataTestId: getAttr(h, 'data-testid')
                             })).filter(h => h.text);
 
                         // Buttons
@@ -153,7 +209,8 @@ async def page_inspection_node(state: TestPilotState) -> Dict[str, Any]:
                                 label: inp.labels?.[0]?.innerText?.trim(),
                                 required: inp.required,
                                 id: inp.id || undefined,
-                                ariaLabel: getAttr(inp, 'aria-label')
+                                ariaLabel: getAttr(inp, 'aria-label'),
+                                dataTestId: getAttr(inp, 'data-testid')
                             }));
 
                         // Forms
@@ -194,10 +251,30 @@ async def page_inspection_node(state: TestPilotState) -> Dict[str, Any]:
                             role: getAttr(el, 'role')
                         }));
 
-                        const bodyText = document.body.innerText || "";
+                        // Elements carrying an explicit data-testid (stable locators)
+                        const elementsWithTestId = Array.from(document.querySelectorAll('[data-testid]'))
+                            .filter(isVisible)
+                            .map(el => ({
+                                testId: getAttr(el, 'data-testid'),
+                                tag: el.tagName.toLowerCase(),
+                                role: getAttr(el, 'role') || undefined,
+                                text: (el.innerText || '').trim().slice(0, 100)
+                            })).filter(e => e.testId);
+
+                                                const bodyText = document.body.innerText || "";
+
+                        // Images with alt text. Alt text is an ACCESSIBILITY
+                        // NAME (like an aria-label), NOT visible text: it must
+                        // never be turned into a getByText(...) assertion.
+                        const images = Array.from(document.querySelectorAll('img'))
+                            .filter(isVisible)
+                            .map(img => ({
+                                alt: getAttr(img, 'alt'),
+                                src: getAttr(img, 'src')
+                            })).filter(img => img.alt);
 
                         return {
-                            title: document.title,
+                            title: document.title || "",
                             headings,
                             buttons,
                             inputs,
@@ -206,12 +283,20 @@ async def page_inspection_node(state: TestPilotState) -> Dict[str, Any]:
                             cards,
                             links,
                             interactive_elements: interactive,
+                            elements_with_testid: elementsWithTestId,
+                            images,
                             bodyText: bodyText.slice(0, 800)
                         };
                     }""")
 
-                    # Classify page type
+                    # Classify page type (in-app 404 views are NOT usable routes)
+                    body_text = dom_data.get("bodyText", "")
+                    title_text = dom_data.get("title", "")
+                    is_not_found = _is_not_found_page(title_text, body_text)
+
                     page_type = classify_page_type(route, dom_data)
+                    if is_not_found:
+                        page_type = "not_found"
 
                     # Extract Accessibility Tree (AOM) for semantic page structure.
                     # Used by test_repair_node instead of raw HTML to reduce
@@ -236,7 +321,9 @@ async def page_inspection_node(state: TestPilotState) -> Dict[str, Any]:
                     inspections.append({
                         "route": route,
                         "page_type": page_type,
-                        "title": dom_data.get("title", ""),
+                        "title": title_text,
+                        "status_code": response.status if response else None,
+                        "is_not_found": is_not_found,
                         "headings": dom_data.get("headings", []),
                         "buttons": dom_data.get("buttons", []),
                         "forms": dom_data.get("forms", []),
@@ -244,7 +331,9 @@ async def page_inspection_node(state: TestPilotState) -> Dict[str, Any]:
                         "cards": dom_data.get("cards", []),
                         "links": dom_data.get("links", []),
                         "interactive_elements": dom_data.get("interactive_elements", []),
-                        "inputs": dom_data.get("inputs", []),
+                                                "inputs": dom_data.get("inputs", []),
+                        "elements_with_testid": dom_data.get("elements_with_testid", []),
+                        "images": dom_data.get("images", []),
                         "authentication_required": auth_required,
                         "accessibility_tree": accessibility_tree,
                     })
@@ -257,7 +346,8 @@ async def page_inspection_node(state: TestPilotState) -> Dict[str, Any]:
             await browser.close()
 
     try:
-        await run_playwright(_run_inspection)
+        async with target_slot(website_url):
+            await run_playwright(_run_inspection)
     except Exception as e:
         logger.error(f"[Node: page_inspection] Playwright inspection failed: {e}")
 
@@ -268,14 +358,18 @@ async def page_inspection_node(state: TestPilotState) -> Dict[str, Any]:
                 "route": route,
                 "page_type": "landing_page" if route == "/" else "unknown",
                 "title": f"Route {route}",
+                "status_code": None,
+                "is_not_found": False,
                 "headings": [],
                 "buttons": [],
                 "forms": [],
                 "tables": [],
                 "cards": [],
                 "links": [],
-                "interactive_elements": [],
+                                "interactive_elements": [],
                 "inputs": [],
+                "elements_with_testid": [],
+                "images": [],
                 "authentication_required": False,
                 "accessibility_tree": "",
             })

@@ -1,4 +1,4 @@
-﻿import uuid
+import uuid
 import logging
 from datetime import datetime, timezone
 from typing import Any, Dict
@@ -8,7 +8,7 @@ from app.db import (
     list_projects as db_list_projects,
     get_project as db_get_project,
     insert_project,
-    update_project,
+    update_project as db_update_project,
     cascade_delete_project,
     list_runs,
     list_cases,
@@ -92,6 +92,7 @@ async def get_analytics():
         run_cases = [c for c in cases if c.get("testRunId") == r["id"]]
         recent_runs.append({
             "id": r["id"],
+            "projectId": r.get("projectId"),
             "projectName": project_name_by_id.get(r.get("projectId"), "Unknown"),
             "status": r.get("status", "unknown"),
             "passedCases": sum(1 for c in run_cases if c.get("status") == "passed"),
@@ -203,7 +204,7 @@ async def update_project(project_id: str, data: dict):
         fields["testEmail"] = test_email
 
     if fields:
-        update_project(project_id, fields)
+        db_update_project(project_id, fields)
 
     if test_email or test_password:
         current_creds = await credential_store.get_credential(project_id) or {}

@@ -236,3 +236,255 @@ class TestLiveVerifyNode:
         message = result["messages"][0]["content"]
         assert "1 scenarios pre-verified" in message
         assert "1 flagged" in message
+
+
+class TestLiveVerifyTestIds:
+    """Grounded data-testids are verified exactly (no fuzzy rewriting)."""
+
+    async def test_observed_testid_is_verified(self):
+        state = {
+            "run_id": "run-1",
+            "test_plan": [{
+                "id": "TC-01",
+                "name": "Hero",
+                "route": "/",
+                "steps": [
+                    {"action": "navigate", "value": "https://x.com"},
+                    {"action": "assert_visible", "locator_type": "testid", "testid": "hero-title"},
+                ],
+            }],
+            "page_inspections": [{
+                "route": "/",
+                "elements_with_testid": [{"testId": "hero-title", "tag": "h1", "text": "Welcome"}],
+            }],
+        }
+
+        result = await live_verify_node(state)
+        assert result["live_verifications"]["hero"]["status"] == "verified"
+
+    async def test_invented_testid_is_flagged_not_corrected(self):
+        state = {
+            "run_id": "run-1",
+            "test_plan": [{
+                "id": "TC-01",
+                "name": "Hero",
+                "route": "/",
+                "steps": [
+                    {"action": "navigate", "value": "https://x.com"},
+                    {"action": "click", "testid": "make-believe", "first": True},
+                ],
+            }],
+            "page_inspections": [{
+                "route": "/",
+                "elements_with_testid": [{"testId": "hero-title"}],
+            }],
+        }
+
+        result = await live_verify_node(state)
+        report = result["live_verifications"]["hero"]
+        assert report["status"] == "unverified"
+        assert any("make-believe" in m for m in report["unconfirmedSelectors"])
+        # Fail-open: an invented testid is never silently rewritten.
+        assert result["test_plan"][0]["steps"][1]["testid"] == "make-believe"
+        assert report["corrections"] == []
+
+    def test_testid_hint_extraction(self):
+        hints = _selector_hints([
+            {"action": "click", "testid": "cta-button"},
+            {"action": "fill", "testid": "email-input"},
+        ])
+        assert len(hints) == 2
+        assert all(h["pool"] == "testid" for h in hints)
+        assert hints[0]["step_field"] == "testid"
+
+
+
+def _raw_inspection(
+    route="/",
+    title="Home",
+    headings=None,
+    buttons=None,
+    inputs=None,
+    links=None,
+    images=None,
+    testids=None,
+    is_not_found=False,
+    status_code=200,
+):
+    """Builds a RAW inspection dict in the exact shape page_inspection_node emits.
+
+    Regression guard: prior grounding bugs slipped through because unit tests
+    fed pre-shaped evidence instead of the real live inspection shape.
+    """
+    return {
+        "route": route,
+        "title": title,
+        "page_type": "landing_page",
+        "is_not_found": is_not_found,
+        "headings": [{"tag": "h1", "text": h} for h in (headings or [])],
+        "buttons": [{"text": b} for b in (buttons or [])],
+        "inputs": [
+            {"label": lbl, "placeholder": None, "name": None, "type": "text"}
+            for lbl in (inputs or [])
+        ],
+        "links": [{"text": l, "href": "#"} for l in (links or [])],
+        "images": [{"alt": a, "src": "logo.png"} for a in (images or [])],
+        "elements_with_testid": [
+            {"testId": t, "tag": "div", "text": ""} for t in (testids or [])
+        ],
+        "accessibility_tree": "",
+        "status_code": status_code,
+    }
+
+
+class TestLiveVerifyFailClosed:
+    """Fix 3: pre-execution verification is FAIL-CLOSED.
+
+    VERIFIED / CORRECTED -> eligible for browser execution.
+    UNVERIFIED           -> NOT executable, recorded as not_executed, excluded.
+    """
+
+    def test_raw_inspection_builder_matches_live_shape(self):
+        insp = _raw_inspection(
+            "/x", headings=["H"], buttons=["B"], inputs=["I"],
+            links=["L"], images=["A"], testids=["t"],
+        )
+        for key in (
+            "route", "title", "page_type", "is_not_found", "headings",
+            "buttons", "inputs", "links", "images", "elements_with_testid",
+            "accessibility_tree", "status_code",
+        ):
+            assert key in insp
+        assert insp["images"] == [{"alt": "A", "src": "logo.png"}]
+        assert insp["elements_with_testid"][0]["testId"] == "t"
+
+    async def test_unverified_route_is_not_executable(self):
+        state = {
+            "run_id": "run-1",
+            "test_plan": [{
+                "id": "TC-01",
+                "name": "Ghost Page",
+                "route": "/ghost",
+                "steps": [{"action": "navigate", "value": "https://x.com/ghost"}],
+            }],
+            "page_inspections": [_raw_inspection("/")],
+        }
+
+        result = await live_verify_node(state)
+
+        report = result["live_verifications"]["ghost_page"]
+        assert report["status"] == "unverified"
+        assert report["executable"] is False
+        assert report["execution_status"] == "NOT_EXECUTED"
+        assert report["verification_status"] == "FAILED_VERIFICATION"
+
+        # Never scheduled for browser execution.
+        assert result["tests_to_execute"] == []
+        results = result["execution_results"]
+        assert len(results) == 1
+        assert results[0]["status"] == "not_executed"
+        assert results[0]["execution_status"] == "NOT_EXECUTED"
+        assert results[0]["verification_status"] == "FAILED_VERIFICATION"
+        assert results[0]["duration_ms"] == 0
+        assert "FAILED_VERIFICATION" in results[0]["logs"]
+
+    async def test_missing_selector_fails_closed(self):
+        state = {
+            "run_id": "run-1",
+            "test_plan": [{
+                "id": "TC-01",
+                "name": "Broken Scenario",
+                "route": "/",
+                "steps": [
+                    {"action": "navigate", "value": "https://x.com"},
+                    {"action": "click", "role": "button", "name": "Totally Made Up Button", "first": True},
+                ],
+            }],
+            "page_inspections": [_raw_inspection("/", buttons=["Real Button"])],
+        }
+
+        result = await live_verify_node(state)
+
+        report = result["live_verifications"]["broken_scenario"]
+        assert report["status"] == "unverified"
+        assert report["executable"] is False
+        assert result["tests_to_execute"] == []
+        assert result["execution_results"][0]["status"] == "not_executed"
+
+    async def test_verified_is_eligible_and_executes_all(self):
+        state = {
+            "run_id": "run-1",
+            "test_plan": [{
+                "id": "TC-01",
+                "name": "Good One",
+                "route": "/",
+                "steps": [
+                    {"action": "navigate", "value": "https://x.com"},
+                    {"action": "assert_visible", "locator_type": "role", "role": "heading", "name": "Pricing", "first": True},
+                ],
+            }],
+            "page_inspections": [_raw_inspection("/", headings=["Pricing"])],
+        }
+
+        result = await live_verify_node(state)
+
+        report = result["live_verifications"]["good_one"]
+        assert report["status"] == "verified"
+        assert report["executable"] is True
+        assert report["execution_status"] == "ELIGIBLE"
+        assert report["verification_status"] == "VERIFIED"
+        # Nothing excluded -> sentinel None means "execute all".
+        assert result["tests_to_execute"] is None
+        assert "execution_results" not in result
+
+    async def test_corrected_is_eligible(self):
+        state = {
+            "run_id": "run-1",
+            "test_plan": [{
+                "id": "TC-01",
+                "name": "Newsletter Signup",
+                "route": "/",
+                "steps": [
+                    {"action": "navigate", "value": "https://x.com"},
+                    {"action": "click", "role": "button", "name": "Subscribe to Newsletter", "first": True},
+                ],
+            }],
+            "page_inspections": [_raw_inspection("/", buttons=["Subscribe to our Newsletter"])],
+        }
+
+        result = await live_verify_node(state)
+
+        report = result["live_verifications"]["newsletter_signup"]
+        assert report["status"] == "corrected"
+        assert report["executable"] is True
+        assert report["execution_status"] == "ELIGIBLE"
+        assert report["verification_status"] == "CORRECTED"
+        assert result["tests_to_execute"] is None
+
+    async def test_mixed_schedules_only_eligible_ids(self):
+        state = {
+            "run_id": "run-1",
+            "test_plan": [
+                {
+                    "id": "TC-01",
+                    "name": "Good One",
+                    "route": "/",
+                    "steps": [
+                        {"action": "navigate", "value": "https://x.com"},
+                        {"action": "assert_visible", "locator_type": "role", "role": "heading", "name": "Pricing", "first": True},
+                    ],
+                },
+                {
+                    "id": "TC-02",
+                    "name": "Unknown Route",
+                    "route": "/missing",
+                    "steps": [{"action": "navigate", "value": "https://x.com/missing"}],
+                },
+            ],
+            "page_inspections": [_raw_inspection("/", headings=["Pricing"])],
+        }
+
+        result = await live_verify_node(state)
+
+        assert result["tests_to_execute"] == ["good_one"]
+        assert [r["test_name"] for r in result["execution_results"]] == ["Unknown Route"]

@@ -59,11 +59,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               className="w-8 h-8 rounded-lg flex items-center justify-center text-white text-xs font-bold shadow-[0_0_12px_rgba(139,92,246,0.3)] border"
               style={{ background: "var(--gradient-1)", borderColor: "rgba(255,255,255,0.15)" }}
             >
-              TP
+              V
             </div>
             <div className="flex flex-col">
               <span className="text-sm font-semibold tracking-tight" style={{ color: "var(--text-primary)" }}>
-                TestPilot<span style={{ color: "var(--accent)" }}>AI</span>
+                Verity
               </span>
               <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>Workspace IDE</span>
             </div>

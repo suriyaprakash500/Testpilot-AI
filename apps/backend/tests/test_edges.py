@@ -208,3 +208,65 @@ class TestRouteAfterInconclusiveRetry:
     def test_missing_state_key_routes_to_pr(self):
         state = {}
         assert route_after_inconclusive_retry(state) == "github_pr"
+
+
+
+class TestRepairStatusRouting:
+    """Fix 4/5: a REJECTED repair (intent changed) is terminal and must never
+    re-enter test_repair."""
+
+    def test_rejected_repair_routes_to_pr(self):
+        state = {
+            "failure_analyses": {"test_1": {"root_cause": "selector_wrong"}},
+            "repair_attempts": {},
+            "repair_statuses": {"test_1": {"status": "REJECTED", "reason": "intent changed"}},
+        }
+        assert route_after_failure_analysis(state) == "github_pr"
+
+    def test_accepted_repair_still_routes_to_repair(self):
+        state = {
+            "failure_analyses": {"test_1": {"root_cause": "selector_wrong"}},
+            "repair_attempts": {},
+            "repair_statuses": {"test_1": {"status": "ACCEPTED"}},
+        }
+        assert route_after_failure_analysis(state) == "test_repair"
+
+    def test_rejected_one_does_not_block_other_repairable(self):
+        state = {
+            "failure_analyses": {
+                "test_1": {"root_cause": "selector_wrong"},
+                "test_2": {"root_cause": "timing_issue"},
+            },
+            "repair_attempts": {},
+            "repair_statuses": {"test_1": {"status": "REJECTED"}},
+        }
+        assert route_after_failure_analysis(state) == "test_repair"
+
+    def test_missing_repair_statuses_key_is_safe(self):
+        state = {
+            "failure_analyses": {"test_1": {"root_cause": "selector_wrong"}},
+            "repair_attempts": {},
+        }
+        assert route_after_failure_analysis(state) == "test_repair"
+
+
+class TestNotExecutedEvaluationRouting:
+    """A NOT_EXECUTED-only mix (plus passes) is not actionable: go to PR."""
+
+    def test_not_executed_only_routes_to_pr(self):
+        state = {
+            "evaluation_results": {
+                "test_1": {"verdict": "PASS"},
+                "test_2": {"verdict": "NOT_EXECUTED"},
+            }
+        }
+        assert route_after_evaluation(state) == "github_pr"
+
+    def test_fail_still_outranks_not_executed(self):
+        state = {
+            "evaluation_results": {
+                "test_1": {"verdict": "NOT_EXECUTED"},
+                "test_2": {"verdict": "FAIL"},
+            }
+        }
+        assert route_after_evaluation(state) == "failure_analysis"

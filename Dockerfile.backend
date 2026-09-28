@@ -1,15 +1,50 @@
-FROM mcr.microsoft.com/playwright/python:v1.42.0-jammy
+# TestPilot AI — backend image
+#
+# Base image ships Python + Chromium + all Playwright browser dependencies.
+# The tag is pinned to the SAME Playwright version as apps/backend/requirements.txt
+# (playwright==1.62.0) so the Python driver and the installed browser build
+# never drift apart.
+FROM mcr.microsoft.com/playwright/python:v1.62.0-jammy
 
+# Everything runs from /app.
 WORKDIR /app
 
-# Copy requirements and install dependencies
-COPY apps/backend/requirements.txt ./
+ENV PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+# --- Python dependencies (cached layer) ---
+# The build context is the repository root, hence the apps/backend/ prefix.
+COPY apps/backend/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application source code
+# --- Application source ---
 COPY apps/backend/app ./app
 
-ENV PORT=3001
+# --- Persistent, writable storage locations ---
+# These are mounted as volumes in docker-compose / EC2 so data survives
+# container recreation. Paths are configurable at runtime via env vars.
+ENV DATABASE_PATH=/data/testpilot.db \
+    ARTIFACTS_DIR=/artifacts \
+    REPOS_DIR=/repos
+
+# --- Non-root runtime user (uid/gid 10001) ---
+RUN set -eux; \
+    groupadd -g 10001 testpilot 2>/dev/null || true; \
+    useradd -m -u 10001 -g 10001 testpilot 2>/dev/null || true; \
+    mkdir -p /data /artifacts /repos /home/testpilot; \
+    chown -R 10001:10001 /data /artifacts /repos /app /home/testpilot
+
+USER 10001:10001
+
+ENV HOME=/home/testpilot \
+    PORT=3001
+
 EXPOSE 3001
+
+# --- Healthcheck ---
+# Uses Python's stdlib urllib because curl is not guaranteed in the image.
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+    CMD ["python", "-c", "import urllib.request,sys; sys.exit(0) if urllib.request.urlopen('http://localhost:3001/api/health', timeout=5).status == 200 else sys.exit(1)"]
 
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "3001"]

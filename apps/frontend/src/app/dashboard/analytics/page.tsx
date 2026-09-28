@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState, useEffect, useCallback } from "react";
 import { TrendingUp, CheckCircle, AlertCircle, RefreshCw, BarChart2, ShieldAlert } from "lucide-react";
 import { api, getErrorMessage, type AnalyticsData } from "../../../lib/api";
@@ -64,7 +65,7 @@ export default function AnalyticsPage() {
   }, []);
 
   if (loading) {
-    return (
+                  return (
       <div className="p-8 min-h-screen flex items-center justify-center">
         <div className="flex flex-col items-center gap-3">
           <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-indigo-500" />
@@ -75,7 +76,7 @@ export default function AnalyticsPage() {
   }
 
   if (error || !data) {
-    return (
+                  return (
       <div className="p-8">
         <div className="mb-8 flex justify-between items-center">
           <div>
@@ -102,7 +103,7 @@ export default function AnalyticsPage() {
 
   const hasData = data.projects.length > 0;
 
-  return (
+                  return (
     <div className="p-8">
       <div className="mb-8 flex justify-between items-center">
         <div>
@@ -207,7 +208,7 @@ export default function AnalyticsPage() {
                     if (projectItem.passRate >= 80) passColor = "var(--success)";
                     else if (projectItem.passRate >= 50) passColor = "var(--warning)";
 
-                    return (
+                  return (
                       <tr key={projectItem.id} style={{ borderBottom: "1px solid var(--border)", opacity: projectItem.totalRuns > 0 ? 1 : 0.6 }}>
                         <td className="py-3">
                           <div className="font-medium" style={{ color: "var(--text-primary)" }}>{projectItem.name}</div>
@@ -248,10 +249,17 @@ export default function AnalyticsPage() {
                   else if (run.status === "executing") statusColor = "var(--accent)";
 
                   return (
-                    <div
+                    <Link
                       key={run.id}
-                      className="p-3 rounded-lg flex items-center justify-between"
+                      href={`/dashboard/${run.projectId}/runs/${run.id}`}
+                      className="p-3 rounded-lg flex items-center justify-between transition-colors cursor-pointer"
                       style={{ background: "var(--bg-secondary)", border: "1px solid var(--border)" }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.borderColor = "var(--border-hover)";
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.borderColor = "var(--border)";
+                      }}
                     >
                       <div>
                         <div className="text-xs font-semibold" style={{ color: "var(--text-primary)" }}>
@@ -269,7 +277,7 @@ export default function AnalyticsPage() {
                           <span style={{ color: "var(--success)" }}>{run.passedCases}</span> / <span style={{ color: "var(--error)" }}>{run.failedCases}</span> cases
                         </div>
                       </div>
-                    </div>
+                    </Link>
                   );
                 })
               )}

@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from typing import Dict, Any, List
 from app.graph.state import TestPilotState
@@ -5,6 +6,25 @@ from app.graph.state import TestPilotState
 logger = logging.getLogger("graph-inconclusive-retry")
 
 MAX_INCONCLUSIVE_RETRIES = 2
+
+# Bounded backoff for rate-limited (429) retries. Honours a server-provided
+# Retry-After when available, otherwise uses exponential backoff. The cap
+# keeps a single retry cycle short and, combined with MAX_INCONCLUSIVE_RETRIES,
+# guarantees retries cannot loop forever.
+BASE_BACKOFF_SECONDS = 2.0
+MAX_BACKOFF_SECONDS = 30.0
+
+
+def _compute_backoff(retry_count: int, retry_after: int) -> float:
+    """Bounded retry delay in seconds.
+
+    - Retry-After (from the server) wins when present and positive.
+    - Otherwise exponential backoff: base * 2^(retry_count-1).
+    - Always capped at MAX_BACKOFF_SECONDS.
+    """
+    if retry_after and retry_after > 0:
+        return min(MAX_BACKOFF_SECONDS, float(retry_after))
+    return min(MAX_BACKOFF_SECONDS, BASE_BACKOFF_SECONDS * (2 ** max(0, retry_count - 1)))
 
 
 async def inconclusive_retry_node(state: TestPilotState) -> Dict[str, Any]:
@@ -33,6 +53,7 @@ async def inconclusive_retry_node(state: TestPilotState) -> Dict[str, Any]:
     new_retries: Dict[str, int] = {}
     retryable_ids: List[str] = []
     exhausted_ids: List[str] = []
+    max_backoff = 0.0
 
     for test_id in inconclusive_tests:
         retry_count = current_retries.get(test_id, 0) + 1
@@ -40,6 +61,21 @@ async def inconclusive_retry_node(state: TestPilotState) -> Dict[str, Any]:
 
         if retry_count <= MAX_INCONCLUSIVE_RETRIES:
             retryable_ids.append(test_id)
+            # Rate-limited (429) tests back off before re-execution so we do
+            # not immediately hammer a target that just asked us to slow down.
+            evaluation = evaluation_results.get(test_id) or {}
+            if evaluation.get("category") == "rate_limited":
+                backoff = _compute_backoff(retry_count, evaluation.get("retry_after") or 0)
+                max_backoff = max(max_backoff, backoff)
+                logger.info(
+                    "Rate-limited test scheduled with backoff",
+                    extra={
+                        "run_id": run_id,
+                        "test_id": test_id,
+                        "retry_attempt": retry_count,
+                        "backoff_seconds": backoff,
+                    }
+                )
             logger.info(
                 "Scheduling inconclusive test for retry",
                 extra={
@@ -55,6 +91,14 @@ async def inconclusive_retry_node(state: TestPilotState) -> Dict[str, Any]:
                 "Inconclusive test retries exhausted, marking as environment flaky",
                 extra={"run_id": run_id, "test_id": test_id, "total_retries": retry_count}
             )
+
+    # Single bounded wait for the whole batch (only when a 429 forced backoff).
+    if max_backoff > 0:
+        logger.info(
+            "Backing off before retrying rate-limited tests",
+            extra={"run_id": run_id, "backoff_seconds": max_backoff}
+        )
+        await asyncio.sleep(max_backoff)
 
     summary_parts = []
     if retryable_ids:

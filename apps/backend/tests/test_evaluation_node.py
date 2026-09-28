@@ -300,3 +300,138 @@ class TestEvaluationNode:
         }
         result = await evaluation_node(state)
         assert "login_auth_flow" in result["evaluation_results"]
+
+
+class TestRateLimitClassification:
+    """HTTP 429 must be classified as a transient environment condition,
+    never as a selector failure or application bug."""
+
+    def test_structured_rate_limit_flag_is_inconclusive(self):
+        result = _classify_test_result({
+            "status": "failed",
+            "error": "Step failed",
+            "logs": "",
+            "duration_ms": 120,
+            "rate_limited": True,
+            "http_status": 429,
+            "retry_after": 5,
+        })
+        assert result["verdict"] == "INCONCLUSIVE"
+        assert result["category"] == "rate_limited"
+        assert result["retry_after"] == 5
+
+    def test_http_status_429_string_is_rate_limited(self):
+        result = _classify_test_result({
+            "status": "failed",
+            "error": "",
+            "logs": "",
+            "duration_ms": 100,
+            "http_status": "429",
+        })
+        assert result["verdict"] == "INCONCLUSIVE"
+        assert result["category"] == "rate_limited"
+
+    def test_too_many_requests_text_is_rate_limited(self):
+        result = _classify_test_result({
+            "status": "failed",
+            "error": "429 Too Many Requests",
+            "logs": "",
+            "duration_ms": 100,
+        })
+        assert result["verdict"] == "INCONCLUSIVE"
+        assert result["category"] == "rate_limited"
+
+    def test_rate_limit_outranks_selector_text(self):
+        """A rate-limit page that happens to mention a locator must NOT be
+        reinterpreted as a broken selector."""
+        result = _classify_test_result({
+            "status": "failed",
+            "error": "waiting for locator('#x') - 429 Too Many Requests",
+            "logs": "",
+            "duration_ms": 100,
+        })
+        assert result["verdict"] == "INCONCLUSIVE"
+        assert result["category"] == "rate_limited"
+
+    def test_retry_after_unparseable_defaults_to_zero(self):
+        result = _classify_test_result({
+            "status": "failed",
+            "error": "Too many requests",
+            "logs": "",
+            "duration_ms": 100,
+            "retry_after": "not-a-number",
+        })
+        assert result["retry_after"] == 0
+
+    def test_passed_test_is_not_rate_limited(self):
+        result = _classify_test_result({
+            "status": "passed",
+            "error": None,
+            "logs": "",
+            "duration_ms": 100,
+            "rate_limited": True,
+        })
+        assert result["verdict"] == "PASS"
+
+
+
+class TestNotExecutedClassification:
+    """Fix 3: a not_executed result is a TestPilot pre-execution validation
+    failure, never a FAIL (app bug) and never INCONCLUSIVE (flake)."""
+
+    def test_not_executed_returns_not_executed_verdict(self):
+        result = _classify_test_result({
+            "status": "not_executed",
+            "error": "Verification failed: data-testid 'x' was not observed",
+            "logs": "[LiveVerify] FAILED_VERIFICATION; not run.",
+            "duration_ms": 0,
+            "execution_status": "NOT_EXECUTED",
+            "verification_status": "FAILED_VERIFICATION",
+        })
+        assert result["verdict"] == "NOT_EXECUTED"
+        assert result["category"] == "verification_failure"
+        assert result["verdict"] not in ("FAIL", "INCONCLUSIVE")
+
+    def test_not_executed_outranks_zero_duration_rule(self):
+        # A zero-duration result would normally map to never_executed; the
+        # explicit not_executed status must take precedence.
+        result = _classify_test_result({
+            "status": "not_executed",
+            "error": "",
+            "logs": "",
+            "duration_ms": 0,
+        })
+        assert result["verdict"] == "NOT_EXECUTED"
+        assert result["category"] == "verification_failure"
+        assert result["category"] != "never_executed"
+
+    def test_not_executed_evidence_falls_back_when_error_empty(self):
+        result = _classify_test_result({
+            "status": "not_executed",
+            "error": "",
+            "logs": "",
+            "duration_ms": 0,
+        })
+        assert result["evidence"] == "FAILED_VERIFICATION"
+
+    @pytest.mark.asyncio
+    async def test_node_classifies_not_executed_alongside_pass(self):
+        state = {
+            "run_id": "test-run",
+            "execution_results": [
+                {"test_name": "Pass Test", "status": "passed", "error": None, "logs": "", "duration_ms": 100},
+                {
+                    "test_name": "Verified Never Run",
+                    "status": "not_executed",
+                    "error": "Verification failed: unconfirmed selector",
+                    "logs": "",
+                    "duration_ms": 0,
+                },
+            ],
+        }
+        result = await evaluation_node(state)
+        evaluations = result["evaluation_results"]
+
+        assert evaluations["pass_test"]["verdict"] == "PASS"
+        assert evaluations["verified_never_run"]["verdict"] == "NOT_EXECUTED"
+        assert evaluations["verified_never_run"]["category"] == "verification_failure"

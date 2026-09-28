@@ -134,6 +134,14 @@ export interface TestCase {
   code?: string;
   screenshotUrl: string | null;
   createdAt: string;
+  // Failure/repair provenance (present on runs created after the repair loop
+  // started persisting per-case analysis).
+  failedFirstPass?: number | null;
+  rootCause?: string | null;
+  repairAttempts?: number | null;
+  firstPassError?: string | null;
+  analysisNote?: string | null;
+  liveStatus?: string | null;
 }
 
 export interface UserProfile {
@@ -170,6 +178,7 @@ export interface AnalyticsProjectSummary {
 
 export interface AnalyticsRecentRun {
   id: string;
+  projectId: string;
   projectName: string;
   status: string;
   passedCases: number;

@@ -23,6 +23,19 @@ _ENVIRONMENT_ERROR_PATTERNS = [
     "503 service",
 ]
 
+# Patterns indicating HTTP 429 rate limiting. These are flagged by
+# browser_execution (structured fields) OR appear verbatim in the output.
+# A rate limit is a transient/environment condition: it must NEVER be treated
+# as a selector failure, test defect, or application bug.
+_RATE_LIMIT_PATTERNS = [
+    "429",
+    "too many requests",
+    "rate limit",
+    "rate-limit",
+    "ratelimit",
+    "retry-after",
+]
+
 # Patterns indicating a Playwright selector/element error.
 # NOTE: these are checked BEFORE environment patterns so that errors which
 # contain BOTH kinds of text (e.g. "Locator.click: Timeout 30000ms exceeded.
@@ -38,6 +51,42 @@ _SELECTOR_ERROR_PATTERNS = [
     "element is not visible",
     "element is not attached",
 ]
+
+
+def _rate_limit_retry_after(test_result: Dict[str, Any]) -> int:
+    """Returns the Retry-After (seconds) advertised by the server, if any.
+
+    Accepts either a numeric seconds value or an HTTP-date; unparseable
+    values fall back to 0 (caller then uses bounded exponential backoff).
+    """
+    raw = test_result.get("retry_after")
+    if raw in (None, ""):
+        return 0
+    try:
+        return max(0, int(float(raw)))
+    except (TypeError, ValueError):
+        # HTTP-date form is rare here; fall back to bounded backoff.
+        return 0
+
+
+def _is_rate_limited(test_result: Dict[str, Any], error: str, logs: str) -> bool:
+    """Detects an HTTP 429 rate-limit condition.
+
+    Prefers browser_execution's structured signal (``rate_limited`` /
+    ``http_status``). Falls back to unambiguous textual patterns so that a
+    rate-limit condition is still recognised when only logs are available.
+    """
+    if test_result.get("rate_limited"):
+        return True
+    if str(test_result.get("http_status") or "") == "429":
+        return True
+    # Unambiguous phrases may appear in either error or logs.
+    combined = f"{error} {logs}"
+    if any(p in combined for p in ("too many requests", "rate limit", "rate-limit", "ratelimit", "retry-after")):
+        return True
+    # Bare "429" only counts when it is in the error field (avoids matching
+    # stray digits in unrelated log lines / durations).
+    return "429" in error
 
 
 def _classify_test_result(test_result: Dict[str, Any]) -> Dict[str, Any]:
@@ -61,13 +110,40 @@ def _classify_test_result(test_result: Dict[str, Any]) -> Dict[str, Any]:
             "evidence": ""
         }
 
-        # Zero-duration test -> never executed
+    # Pre-execution verification failure: live_verify refused to schedule this
+    # test (fail-closed). It was never executed and is NOT a test failure nor an
+    # application bug - it is a TestPilot validation failure.
+    if status == "not_executed":
+        return {
+            "verdict": "NOT_EXECUTED",
+            "category": "verification_failure",
+            "reason": "Test was never executed: pre-execution selector verification failed.",
+            "evidence": (error or "FAILED_VERIFICATION")[:300],
+        }
+
+    # Zero-duration test -> never executed
     if duration_ms == 0 and status != "passed":
         return {
             "verdict": "INCONCLUSIVE",
             "category": "never_executed",
             "reason": "Test reported zero duration, likely never ran.",
             "evidence": error or "No execution data"
+        }
+
+    # HTTP 429 rate limiting -> transient/environment condition, NOT a test
+    # defect. Classified BEFORE selector patterns so a rate-limit alert page
+    # can never be reinterpreted as a broken selector or an application bug.
+    if status != "passed" and _is_rate_limited(test_result, error, logs):
+        retry_after = _rate_limit_retry_after(test_result)
+        return {
+            "verdict": "INCONCLUSIVE",
+            "category": "rate_limited",
+            "reason": (
+                "HTTP 429 rate limit encountered; treating as a transient "
+                "environment condition and retrying with backoff."
+            ),
+            "evidence": (error or logs)[:300],
+            "retry_after": retry_after,
         }
 
         # Playwright selector/element error (checked FIRST: interaction timeouts

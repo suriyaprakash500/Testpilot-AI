@@ -65,12 +65,16 @@ def route_after_failure_analysis(state: TestPilotState) -> str:
     """
     failure_analyses = state.get("failure_analyses") or {}
     repair_attempts = state.get("repair_attempts") or {}
+    repair_statuses = state.get("repair_statuses") or {}
 
     repairable_tests = [
         test_id
         for test_id, analysis in failure_analyses.items()
         if analysis.get("root_cause") in {"selector_wrong", "timing_issue", "test_assumption_wrong"}
         and repair_attempts.get(test_id, 0) < MAX_REPAIR_ATTEMPTS
+        # A repair that changed the test's semantic intent is terminal: it must
+        # not be repaired again (repair_statuses[test_id]["status"] == "REJECTED").
+        and (repair_statuses.get(test_id) or {}).get("status") != "REJECTED"
     ]
 
     if repairable_tests:

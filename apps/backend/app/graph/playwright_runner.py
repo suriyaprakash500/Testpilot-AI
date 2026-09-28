@@ -11,7 +11,9 @@ import asyncio
 import sys
 import logging
 from concurrent.futures import ThreadPoolExecutor
-from typing import TypeVar, Callable, Coroutine, Any
+from contextlib import asynccontextmanager
+from typing import TypeVar, Callable, Coroutine, Any, Dict
+from urllib.parse import urlparse
 
 logger = logging.getLogger("playwright-runner")
 
@@ -65,3 +67,39 @@ async def run_playwright(coro_fn: Callable[[], Coroutine[Any, Any, T]]) -> T:
         _playwright_executor,
         lambda: _run_in_proactor_loop(coro_fn)
     )
+
+
+# Per-host concurrency control.
+#
+# Multiple pipeline runs can target the same site concurrently. Even though
+# Playwright work is already serialized through the single-worker executor
+# above, we still guard against hammering a single target host (a common
+# trigger for HTTP 429 rate limiting) with an explicit per-host slot. Locks
+# are created lazily and keyed by network location, so unrelated targets are
+# unaffected.
+_host_slots: Dict[str, asyncio.Lock] = {}
+
+
+def _host_key(url: str) -> str:
+    try:
+        parsed = urlparse(url or "")
+        return parsed.netloc or (url or "default")
+    except Exception:
+        return url or "default"
+
+
+@asynccontextmanager
+async def target_slot(url: str):
+    """Async context manager serializing browser work against one host.
+
+    Acquire this around any ``run_playwright(...)`` call that drives a browser
+    against ``url`` so that concurrent runs cannot pile requests onto the same
+    target simultaneously.
+    """
+    key = _host_key(url)
+    lock = _host_slots.get(key)
+    if lock is None:
+        lock = asyncio.Lock()
+        _host_slots[key] = lock
+    async with lock:
+        yield

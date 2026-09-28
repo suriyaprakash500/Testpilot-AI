@@ -29,7 +29,6 @@ class TestPilotState(TypedDict):
     auth_session: Optional[Dict[str, Any]]
     repo_analysis: Optional[Dict[str, Any]]
     page_inspections: Optional[List[Dict[str, Any]]]
-    code_analysis: Optional[Dict[str, Any]]
     app_understanding: Optional[Dict[str, Any]]
     features: Optional[Dict[str, Any]]
     test_plan_doc: Optional[Dict[str, Any]]
@@ -57,7 +56,21 @@ class TestPilotState(TypedDict):
     # Test IDs to execute in the next cycle (None = execute all)
     tests_to_execute: Optional[List[str]]
 
-    # --- Live Verify (pre-execution selector validation) ---
+        # --- Live Verify (pre-execution selector validation) ---
     # Per-test live DOM verification report:
-    # { test_id: { status, route, confirmedSteps, corrections, unconfirmedSelectors } }
+    # { test_id: { status, route, confirmedSteps, corrections, unconfirmedSelectors,
+    #              executable, execution_status, verification_status } }
     live_verifications: Annotated[Dict[str, dict], merge_dicts]
+
+    # --- Repair integrity (Fix 4/5) ---
+    # Immutable snapshot of each scenario's ORIGINAL intent, captured by
+    # playwright_gen before any execution/repair. A repair may change the
+    # implementation (locator / timing / wait) but must never change the
+    # semantic intent (what the test is testing).
+    # { test_id: { test_id, test_name, feature, route, required_actions, expected_outcome } }
+    test_intents: Annotated[Dict[str, dict], merge_dicts]
+    # Per-test repair-integrity verdict:
+    # { test_id: { status: "ACCEPTED" | "REJECTED", reason } }
+    # A REJECTED repair is terminal for that test: it must not be re-scheduled
+    # for execution nor repaired again.
+    repair_statuses: Annotated[Dict[str, dict], merge_dicts]

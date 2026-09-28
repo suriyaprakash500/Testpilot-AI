@@ -102,6 +102,18 @@ def _selector_hints(steps: List[dict]) -> List[dict]:
     for idx, step in enumerate(steps or []):
         action = step.get("action")
 
+        # A grounded data-testid is a hard, exact locator: verify it verbatim
+        # rather than attempting a fuzzy text match.
+        if step.get("testid"):
+            hints.append({
+                "index": idx,
+                "step_field": "testid",
+                "pool": "testid",
+                "role": "",
+                "label": step.get("testid"),
+            })
+            continue
+
         if action == "click":
             if step.get("name"):
                 hints.append({
@@ -182,6 +194,10 @@ async def live_verify_node(state: TestPilotState) -> Dict[str, Any]:
     updated_plan: List[Dict[str, Any]] = []
     verifications: Dict[str, dict] = {}
     counts = {"verified": 0, "corrected": 0, "unverified": 0}
+    # Fail-closed bookkeeping: scenarios that fail pre-execution verification are
+    # NEVER scheduled for browser execution; they are recorded as not-executed.
+    not_executed_results: List[Dict[str, Any]] = []
+    eligible_ids: List[str] = []
 
     for scenario in plan:
         test_key = _normalize_test_id(scenario.get("name", ""))
@@ -198,8 +214,22 @@ async def live_verify_node(state: TestPilotState) -> Dict[str, Any]:
             status = "unverified"
         else:
             index = _build_live_element_index(inspection)
+            observed_testids = {
+                str(el.get("testId"))
+                for el in (inspection.get("elements_with_testid") or [])
+                if el.get("testId")
+            }
 
             for hint in _selector_hints(steps):
+                if hint["pool"] == "testid":
+                    if hint["label"] in observed_testids:
+                        confirmed += 1
+                    else:
+                        unconfirmed.append(
+                            f"data-testid '{hint['label']}' was not observed on live page '{route}'"
+                        )
+                    continue
+
                 candidates = _candidate_pool(hint["pool"], index)
                 best, score = _best_match(hint["label"], candidates)
 
@@ -234,20 +264,34 @@ async def live_verify_node(state: TestPilotState) -> Dict[str, Any]:
                         f"'{original}' -> '{replacement}' ({score:.2f})"
                     )
 
-            if corrections:
-                status = "corrected"
-            elif not unconfirmed:
-                status = "verified"
-            else:
+            # Fail-closed precedence: any unconfirmed selector makes the
+            # scenario UNVERIFIED (never executable), even if some selectors
+            # were also auto-corrected.
+            if unconfirmed:
                 status = "unverified"
+            elif corrections:
+                status = "corrected"
+            else:
+                status = "verified"
 
         counts[status] += 1
+        executable = status in ("verified", "corrected")
+        verification_status = {
+            "verified": "VERIFIED",
+            "corrected": "CORRECTED",
+            "unverified": "FAILED_VERIFICATION",
+        }[status]
+        execution_status = "ELIGIBLE" if executable else "NOT_EXECUTED"
+
         verifications[test_key] = {
             "status": status,
             "route": route,
             "confirmedSteps": confirmed,
             "corrections": corrections,
             "unconfirmedSelectors": unconfirmed,
+            "executable": executable,
+            "execution_status": execution_status,
+            "verification_status": verification_status,
         }
 
         updated_plan.append({
@@ -257,8 +301,32 @@ async def live_verify_node(state: TestPilotState) -> Dict[str, Any]:
                 "status": status,
                 "correctionsApplied": len(corrections),
                 "unconfirmedCount": len(unconfirmed),
+                "executable": executable,
+                "executionStatus": execution_status,
+                "verificationStatus": verification_status,
             },
         })
+
+        if executable:
+            eligible_ids.append(test_key)
+        else:
+            # Fail closed: record a NOT_EXECUTED result so the evaluation loop
+            # treats this as a TestPilot pre-execution validation failure (not an
+            # application bug and not a test failure), and never re-executes it.
+            reason = "; ".join(unconfirmed) or "selector verification failed"
+            not_executed_results.append({
+                "test_name": scenario.get("name", test_key),
+                "status": "not_executed",
+                "duration_ms": 0,
+                "error": f"Verification failed: {reason}",
+                "logs": (
+                    "> playwright test\n"
+                    f"[LiveVerify] FAILED_VERIFICATION; not run. Unconfirmed: {reason}"
+                ),
+                "execution_status": "NOT_EXECUTED",
+                "verification_status": "FAILED_VERIFICATION",
+                "rate_limited": False,
+            })
 
     logger.info(
         f"[Node: live_verify] Result for run {run_id}: "
@@ -266,7 +334,7 @@ async def live_verify_node(state: TestPilotState) -> Dict[str, Any]:
         f"{counts['unverified']} unverified"
     )
 
-    return {
+    result: Dict[str, Any] = {
         "test_plan": updated_plan,
         "live_verifications": verifications,
         "status": "executing",
@@ -275,7 +343,16 @@ async def live_verify_node(state: TestPilotState) -> Dict[str, Any]:
             "content": (
                 f"Live Verify: {counts['verified']} scenarios pre-verified, "
                 f"{counts['corrected']} selectors auto-corrected against the live DOM, "
-                f"{counts['unverified']} flagged for runtime confirmation."
+                f"{counts['unverified']} flagged as NOT EXECUTED (fail-closed)."
             ),
         }],
     }
+    # Fail-closed scheduling: only eligible scenarios are planned for execution.
+    # Unverified scenarios contribute not-executed results and are excluded.
+    if not_executed_results:
+        result["tests_to_execute"] = eligible_ids
+        result["execution_results"] = not_executed_results
+    else:
+        result["tests_to_execute"] = None
+
+    return result

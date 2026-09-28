@@ -9,8 +9,8 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "TestPilot AI — Automated Testing Platform",
-  description: "AI-powered automated testing platform. Analyze repos, generate Playwright tests, and get debugging insights.",
+  title: "Verity — Agentic Test Engineering Platform",
+  description: "Verity — the Agentic Test Engineering Platform. Analyze repos, generate Playwright tests, and get debugging insights.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

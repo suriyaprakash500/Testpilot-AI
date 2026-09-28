@@ -17,7 +17,6 @@ interface PipelineStage {
 const PIPELINE_STAGES: PipelineStage[] = [
   { label: "Repo Analysis", statuses: ["repo_analysis", "analyzing", "pending"] },
   { label: "Live Inspection", statuses: ["page_inspection"] },
-  { label: "Code Analysis", statuses: ["code_analysis"] },
   { label: "App Understanding", statuses: ["app_understanding"] },
   { label: "Test Planning", statuses: ["test_planning"] },
   { label: "Playwright Gen", statuses: ["playwright_gen"] },
@@ -59,6 +58,25 @@ function parseTimeline(timeline: TestRun["timeline"]): TimelineEvent[] {
   }
 }
 
+// Human-readable labels for the backend failure-analysis root causes.
+const ROOT_CAUSE_LABELS: Record<string, string> = {
+  selector_wrong: "Selector mismatch",
+  timing_issue: "Timing / async",
+  test_assumption_wrong: "Wrong test assumption",
+  application_bug: "Application bug",
+};
+
+function rootCauseLabel(cause?: string | null): string {
+  if (!cause) return "";
+  return ROOT_CAUSE_LABELS[cause] || cause;
+}
+
+// A case "had an issue" if it failed outright or was auto-repaired after a
+// first-pass failure. Used to highlight and filter the cases worth inspecting.
+function hasIssue(tc: TestCase): boolean {
+  return tc.status === "failed" || (tc.failedFirstPass ?? 0) === 1 || (tc.repairAttempts ?? 0) > 0;
+}
+
 export default function RunDetailPage({
   params,
 }: {
@@ -73,6 +91,7 @@ export default function RunDetailPage({
   const [selectedCaseId, setSelectedCaseId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"logs" | "code">("logs");
   const [copied, setCopied] = useState(false);
+  const [caseFilter, setCaseFilter] = useState<"all" | "issues">("all");
 
   useEffect(() => {
     let isMounted = true;
@@ -164,6 +183,8 @@ export default function RunDetailPage({
   const failed = testCases.filter((t) => t.status === "failed").length;
   const total = testCases.length;
   const selectedCase = testCases.find((tc) => tc.id === selectedCaseId) || testCases[0];
+  const issueCases = testCases.filter(hasIssue);
+  const displayedCases = caseFilter === "issues" ? issueCases : testCases;
 
   // Run summary stats (persisted at pipeline completion; fall back to
   // per-test-case counts for runs that predate the summary fields).
@@ -194,7 +215,7 @@ export default function RunDetailPage({
   ];
 
   return (
-    <div className="p-6 max-w-7xl mx-auto h-[calc(100vh-3.5rem)] flex flex-col gap-5">
+    <div className="p-6 max-w-7xl mx-auto flex flex-col gap-5">
       {/* Header */}
       <div className="flex items-center justify-between border-b pb-4 flex-shrink-0" style={{ borderColor: "var(--border)" }}>
         <div className="flex items-center gap-3">
@@ -255,8 +276,8 @@ export default function RunDetailPage({
                 {stat.value}
               </span>
               {stat.label === "Failed" && failedFirstPass != null && failedFirstPass > failedFinal && (
-                <span className="text-[9px] font-mono" style={{ color: "var(--text-muted)" }}>
-                  {failedFirstPass} on first pass
+                <span className="text-[9px] font-mono truncate" style={{ color: "var(--text-muted)" }} title={`${failedFirstPass} failed on the first pass and were auto-repaired`}>
+                  {failedFirstPass} failed 1st pass
                 </span>
               )}
               {stat.label === "Live Verified" && (liveCorrectedCount > 0 || liveUnverifiedCount > 0) && (
@@ -329,53 +350,91 @@ export default function RunDetailPage({
 
       {/* Content Area */}
       {testCases.length === 0 ? (
-        <div className="glass p-12 text-center flex-1 flex flex-col items-center justify-center">
+        <div className="glass p-12 text-center flex flex-col items-center justify-center min-h-[40vh]">
           <div className="animate-spin rounded-full h-6 w-6 border-t-2 border-b-2 border-indigo-500 mb-3" />
           <p className="text-xs" style={{ color: "var(--text-secondary)" }}>
             {run.status === "completed" ? "No test cases were generated." : "Running pipeline..."}
           </p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-5 gap-4 flex-1 overflow-hidden min-h-0">
+        <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
           {/* Test Case List */}
-          <div className="lg:col-span-2 glass overflow-y-auto p-3 space-y-1.5">
-            <div className="text-[10px] uppercase font-bold tracking-wider px-2 mb-2 flex items-center justify-between" style={{ color: "var(--text-muted)" }}>
+          <div className="lg:col-span-2 glass overflow-y-auto p-3 space-y-1.5 max-h-[60vh]">
+            <div className="text-[10px] uppercase font-bold tracking-wider px-2 mb-2 flex items-center justify-between gap-2" style={{ color: "var(--text-muted)" }}>
               <span>Test Cases</span>
-              <span>{passed}/{total} passed</span>
-            </div>
-            {testCases.map((tc) => (
-              <div
-                key={tc.id}
-                onClick={() => setSelectedCaseId(tc.id)}
-                className={`p-3 rounded-lg border cursor-pointer transition-all ${selectedCaseId === tc.id
-                    ? "bg-violet-950/20 border-violet-500/40"
-                    : "bg-zinc-950/30 border-zinc-900 hover:border-zinc-700"
-                  }`}
-              >
-                <div className="flex items-start gap-2">
-                  {tc.status === "passed" ? (
-                    <CheckCircle2 size={12} className="mt-0.5 flex-shrink-0 text-emerald-400" />
-                  ) : (
-                    <XCircle size={12} className="mt-0.5 flex-shrink-0 text-rose-400" />
-                  )}
-                  <div className="flex-1 min-w-0">
-                    <p className="text-xs font-medium truncate" style={{ color: selectedCaseId === tc.id ? "var(--text-primary)" : "var(--text-secondary)" }}>
-                      {tc.name}
-                    </p>
-                    {tc.error && (
-                      <p className="text-[9px] font-mono mt-0.5 text-rose-400/80 truncate">
-                        {tc.error.split("\n")[0]}
-                      </p>
-                    )}
+              <div className="flex items-center gap-2">
+                {issueCases.length > 0 && (
+                  <div className="flex items-center p-0.5 rounded-md border normal-case font-semibold" style={{ background: "var(--bg-secondary)", borderColor: "var(--border)" }}>
+                    <button
+                      onClick={() => setCaseFilter("all")}
+                      className={`px-2 py-0.5 rounded cursor-pointer transition-colors ${caseFilter === "all" ? "bg-zinc-700 text-white" : "text-zinc-400 hover:text-zinc-200"}`}
+                    >
+                      All {total}
+                    </button>
+                    <button
+                      onClick={() => setCaseFilter("issues")}
+                      className={`px-2 py-0.5 rounded cursor-pointer transition-colors ${caseFilter === "issues" ? "bg-rose-900/70 text-rose-100" : "text-zinc-400 hover:text-zinc-200"}`}
+                    >
+                      Issues {issueCases.length}
+                    </button>
                   </div>
-                  <span className="text-[9px] font-mono flex-shrink-0" style={{ color: "var(--text-muted)" }}>{tc.duration}ms</span>
-                </div>
+                )}
+                <span>{passed}/{total} passed</span>
               </div>
-            ))}
+            </div>
+            {displayedCases.length === 0 && (
+              <p className="text-[10px] px-2 py-4 text-center" style={{ color: "var(--text-muted)" }}>
+                No failing or repaired cases.
+              </p>
+            )}
+            {displayedCases.map((tc) => {
+              const repaired = (tc.repairAttempts ?? 0) > 0;
+              const failedThenFixed = tc.failedFirstPass === 1 && repaired && tc.status === "passed";
+              return (
+                <div
+                  key={tc.id}
+                  onClick={() => setSelectedCaseId(tc.id)}
+                  className={`p-3 rounded-lg border cursor-pointer transition-all ${selectedCaseId === tc.id
+                      ? "bg-violet-950/20 border-violet-500/40"
+                      : "bg-zinc-950/30 border-zinc-900 hover:border-zinc-700"
+                    }`}
+                >
+                  <div className="flex items-start gap-2">
+                    {tc.status === "passed" ? (
+                      <CheckCircle2 size={12} className="mt-0.5 flex-shrink-0 text-emerald-400" />
+                    ) : (
+                      <XCircle size={12} className="mt-0.5 flex-shrink-0 text-rose-400" />
+                    )}
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-medium truncate" style={{ color: selectedCaseId === tc.id ? "var(--text-primary)" : "var(--text-secondary)" }}>
+                        {tc.name}
+                      </p>
+                      {tc.error && tc.status !== "passed" && (
+                        <p className="text-[9px] font-mono mt-0.5 text-rose-400/80 truncate">
+                          {tc.error.split("\n")[0]}
+                        </p>
+                      )}
+                      {failedThenFixed && (
+                        <p className="text-[9px] font-mono mt-0.5 flex items-center gap-1 text-sky-300/90 truncate" title={tc.analysisNote || ""}>
+                          <Wrench size={9} className="flex-shrink-0" />
+                          auto-fixed · {rootCauseLabel(tc.rootCause)}
+                        </p>
+                      )}
+                      {tc.status !== "passed" && tc.rootCause && (
+                        <p className="text-[9px] font-mono mt-0.5 text-amber-300/90 truncate">
+                          {rootCauseLabel(tc.rootCause)}
+                        </p>
+                      )}
+                    </div>
+                    <span className="text-[9px] font-mono flex-shrink-0" style={{ color: "var(--text-muted)" }}>{tc.duration}ms</span>
+                  </div>
+                </div>
+              );
+            })}
           </div>
 
           {/* Tab Viewer */}
-          <div className="lg:col-span-3 flex flex-col gap-3 min-h-0 overflow-hidden">
+          <div className="lg:col-span-3 flex flex-col gap-3">
             {selectedCase && (
               <>
                 <div className="flex items-center justify-between px-1 flex-shrink-0">
@@ -415,8 +474,56 @@ export default function RunDetailPage({
                   </div>
                 </div>
 
+                {hasIssue(selectedCase) && (
+                  <div className="glass p-3 flex-shrink-0 text-[10px] font-mono space-y-1">
+                    <div className="flex items-center gap-2 mb-1">
+                      <Wrench size={11} className="text-sky-300" />
+                      <span className="uppercase tracking-wider font-bold text-[9px]" style={{ color: "var(--text-muted)" }}>
+                        Failure &amp; Repair
+                      </span>
+                    </div>
+                    {selectedCase.failedFirstPass === 1 && (
+                      <div className="flex gap-2">
+                        <span className="w-24 flex-shrink-0" style={{ color: "var(--text-muted)" }}>First pass</span>
+                        <span className="text-rose-300 break-all">
+                          {selectedCase.firstPassError ? selectedCase.firstPassError.split("\n")[0] : "failed"}
+                        </span>
+                      </div>
+                    )}
+                    {selectedCase.rootCause && (
+                      <div className="flex gap-2">
+                        <span className="w-24 flex-shrink-0" style={{ color: "var(--text-muted)" }}>Root cause</span>
+                        <span className="text-amber-300">
+                          {rootCauseLabel(selectedCase.rootCause)}{" "}
+                          <span style={{ color: "var(--text-muted)" }}>({selectedCase.rootCause})</span>
+                        </span>
+                      </div>
+                    )}
+                    {(selectedCase.repairAttempts ?? 0) > 0 && (
+                      <div className="flex gap-2">
+                        <span className="w-24 flex-shrink-0" style={{ color: "var(--text-muted)" }}>Auto-repaired</span>
+                        <span className="text-sky-300">
+                          {selectedCase.repairAttempts} attempt{(selectedCase.repairAttempts ?? 0) > 1 ? "s" : ""} → final: {selectedCase.status}
+                        </span>
+                      </div>
+                    )}
+                    {selectedCase.analysisNote && (
+                      <div className="flex gap-2">
+                        <span className="w-24 flex-shrink-0" style={{ color: "var(--text-muted)" }}>Analysis</span>
+                        <span className="text-zinc-300 whitespace-pre-wrap break-words">{selectedCase.analysisNote}</span>
+                      </div>
+                    )}
+                    {selectedCase.liveStatus && (
+                      <div className="flex gap-2">
+                        <span className="w-24 flex-shrink-0" style={{ color: "var(--text-muted)" }}>Live verify</span>
+                        <span className="text-zinc-400">{selectedCase.liveStatus}</span>
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 {activeTab === "logs" ? (
-                  <div className="ide-terminal flex-1 overflow-y-auto">
+                  <div className="ide-terminal overflow-y-auto max-h-[56vh]">
                     <div className="text-[10px] font-mono space-y-1 leading-relaxed">
                       {selectedCase.logs ? (
                         selectedCase.logs.split("\n").map((line, i) => (
@@ -450,7 +557,7 @@ export default function RunDetailPage({
                     </div>
                   </div>
                 ) : (
-                  <div className="ide-terminal flex-1 overflow-y-auto relative flex flex-col">
+                  <div className="ide-terminal overflow-y-auto relative flex flex-col max-h-[56vh]">
                     <button
                       onClick={() => handleCopyCode(selectedCase.code || "")}
                       className="absolute top-3 right-3 p-1.5 rounded border transition-all duration-150 cursor-pointer text-zinc-400 hover:text-white bg-slate-900 border-white/[0.06] hover:bg-slate-800"

@@ -2,17 +2,13 @@ import logging
 from typing import Dict, Optional
 from datetime import datetime
 from app.models import AuthSession
+from app.core.singleton import Singleton
 
 logger = logging.getLogger("session-cache")
 
-class AuthSessionCache:
-    _instance = None
-
-    def __new__(cls):
-        if cls._instance is None:
-            cls._instance = super(AuthSessionCache, cls).__new__(cls)
-            cls._instance.cache: Dict[str, AuthSession] = {}
-        return cls._instance
+class AuthSessionCache(Singleton):
+    def __init__(self) -> None:
+        self.cache: Dict[str, AuthSession] = {}
 
     def set(self, session: AuthSession) -> None:
         self.cache[session.project_id] = session

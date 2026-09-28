@@ -1,16 +1,12 @@
 import logging
 from typing import Optional, Dict
+from app.core.singleton import Singleton
 
 logger = logging.getLogger("credential-store")
 
-class CredentialStore:
-    _instance = None
-
-    def __new__(cls):
-        if cls._instance is None:
-            cls._instance = super(CredentialStore, cls).__new__(cls)
-            cls._instance.store: Dict[str, Dict[str, str]] = {}
-        return cls._instance
+class CredentialStore(Singleton):
+    def __init__(self) -> None:
+        self.store: Dict[str, Dict[str, str]] = {}
 
     async def set_credential(self, project_id: str, username: str, password: str) -> None:
         """Stores credentials for a project."""

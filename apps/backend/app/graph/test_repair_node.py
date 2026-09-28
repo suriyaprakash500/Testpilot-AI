@@ -1,6 +1,6 @@
 ﻿import logging
 import json
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from app.graph.state import TestPilotState
 from app.config import settings
 
@@ -46,12 +46,98 @@ def _find_page_inspection(test_id: str, test_plan: list, inspections: list, webs
     return inspections[0] if inspections else {}
 
 
+def _action_types(steps: list) -> set:
+    """Set of step action verbs present in a step list."""
+    return {s.get("action") for s in (steps or []) if s.get("action")}
+
+
+def _action_route(step: dict, website_url: str) -> Optional[str]:
+    """The route a navigate step targets, relative to the site root (else None)."""
+    if (step or {}).get("action") != "navigate":
+        return None
+    value = str(step.get("value") or "")
+    base = (website_url or "").rstrip("/")
+    if base and value.startswith(base):
+        return value[len(base):] or "/"
+    return value or None
+
+
+def _derive_intent(test_id: str, test_plan: list) -> dict:
+    """Derives a scenario's ORIGINAL intent from the test plan.
+
+    Fallback used when ``test_intents`` (captured by playwright_gen) has no
+    entry for the id. Mirrors the snapshot shape so integrity checks work
+    uniformly.
+    """
+    for entry in test_plan or []:
+        name = entry.get("name", "")
+        normalized = name.lower().replace(" ", "_").replace(":", "").strip("_")
+        if normalized == test_id:
+            steps = entry.get("steps") or []
+            return {
+                "test_id": test_id,
+                "test_name": name,
+                "feature": entry.get("feature"),
+                "route": entry.get("route"),
+                "required_actions": [
+                    {
+                        k: s.get(k)
+                        for k in ("action", "role", "name", "label", "value", "testid", "locator_type", "text")
+                        if s.get(k) is not None
+                    }
+                    for s in steps
+                ],
+                "expected_outcome": entry.get("expected_result", ""),
+            }
+    return {}
+
+
+def _validate_repair_integrity(intent: dict, repaired_steps: list, website_url: str) -> tuple:
+    """Verifies a repair preserved the test's SEMANTIC intent.
+
+    A repair may change the implementation (locator / timing / wait) but must
+    never remove a required action, change the target route, or drop assertions.
+    "Passing by degrading" (deleting the real flow and asserting something
+    trivial) is exactly what this rejects. Returns ``(ok, reason)``.
+    """
+    original_actions = _action_types(intent.get("required_actions"))
+    repaired_actions = _action_types(repaired_steps)
+
+    # 1. Action-type coverage: every interaction the original performed must
+    #    still be present. A repair may ADD steps, never remove intent.
+    missing = sorted(a for a in original_actions if a not in repaired_actions)
+    if missing:
+        return False, f"Repair dropped required action type(s): {missing}"
+
+    # 2. Route preservation: the route(s) the original navigated to must still
+    #    be navigated to (a repair may not retarget the test elsewhere).
+    original_routes = {
+        r for r in (_action_route(s, website_url) for s in (intent.get("required_actions") or [])) if r
+    }
+    repaired_routes = {
+        r for r in (_action_route(s, website_url) for s in (repaired_steps or [])) if r
+    }
+    missing_routes = sorted(original_routes - repaired_routes)
+    if missing_routes:
+        return False, f"Repair changed target route(s): {missing_routes}"
+
+    # 3. Assertion non-decrease: a repair may fix a selector but must never
+    #    delete assertions to force a pass.
+    original_asserts = sum(1 for s in (intent.get("required_actions") or []) if s.get("action") == "assert_visible")
+    repaired_asserts = sum(1 for s in (repaired_steps or []) if s.get("action") == "assert_visible")
+    if repaired_asserts < original_asserts:
+        return False, f"Repair dropped assertions ({repaired_asserts} < {original_asserts})"
+
+    return True, "Intent preserved"
+
+
 def _build_repair_prompt(
     test_id: str,
     test_code: str,
     failure_analysis: dict,
     execution_result: dict,
     page_inspection: dict,
+    intent: Optional[dict] = None,
 ) -> str:
     """Builds the prompt for the LLM to repair the test."""
     lines = []
@@ -89,6 +175,19 @@ def _build_repair_prompt(
         if aom:
             lines.append(f"\nAccessibility Tree (semantic page structure):\n{aom[:2000]}")
 
+    if intent:
+        required = intent.get("required_actions") or []
+        lines.append("\nPRESERVE TEST INTENT (MANDATORY - never change WHAT is verified):")
+        lines.append(f"  Required action types: {sorted({a.get('action') for a in required if a.get('action')})}")
+        for a in required:
+            lines.append(f"    - {a}")
+        if intent.get("expected_outcome"):
+            lines.append(f"  Expected outcome: {intent['expected_outcome']}")
+        lines.append("  You may fix the locator / timing / implementation, but you MUST:")
+        lines.append("    * keep every action the original performed (navigate, click, fill, assert_visible);")
+        lines.append("    * keep the SAME target route(s) - never retarget the test elsewhere;")
+        lines.append("    * never delete or weaken assertions to force a pass.")
+
     return "\n".join(lines)
 
 
@@ -98,9 +197,7 @@ async def _llm_repair_test(repair_context: str, root_cause: str) -> list:
     Returns a list of step dicts in the format consumed by browser_execution_node:
     [{"action": "navigate", "value": "..."}, {"action": "assert_visible", ...}]
     """
-    from app.llm import get_llm
-
-    llm = get_llm(temperature=0.2)
+    from app.services.llm.service import llm_service
 
     repair_strategies = {
         "selector_wrong": (
@@ -147,26 +244,10 @@ RULES:
 
 Return ONLY the JSON array. No markdown fences, no explanation."""
 
-    response = await llm.ainvoke(prompt)
-    content = response.content.strip()
-
-    if content.startswith("```"):
-        content = content.split("\n", 1)[1]
-        if content.endswith("```"):
-            content = content.rsplit("```", 1)[0]
-        content = content.strip()
-
-    try:
-        steps = json.loads(content)
-        if isinstance(steps, list) and len(steps) > 0:
-            return steps
-        return None
-    except json.JSONDecodeError:
-        logger.warning(
-            "LLM returned non-JSON for test repair",
-            extra={"raw_response": content[:200]}
-        )
-        return None
+    steps = await llm_service.invoke_json(prompt, expect="array", temperature=0.2)
+    if isinstance(steps, list) and len(steps) > 0:
+        return steps
+    return None
 
 
 async def test_repair_node(state: TestPilotState) -> Dict[str, Any]:
@@ -184,14 +265,18 @@ async def test_repair_node(state: TestPilotState) -> Dict[str, Any]:
     test_plan = state.get("test_plan") or []
     inspections = state.get("page_inspections") or []
     website_url = state.get("website_url", "")
+    test_intents = state.get("test_intents") or {}
+    prior_repair_statuses = state.get("repair_statuses") or {}
 
-    # Filter repairable tests that have not exhausted attempts
+    # Filter repairable tests that have not exhausted attempts. A repair that
+    # previously changed the test's semantic intent is terminal: never re-attempt.
     repairable_tests = {
         test_id: analysis
         for test_id, analysis in failure_analyses.items()
         if analysis.get("repairable")
         and analysis.get("root_cause") in {"selector_wrong", "timing_issue", "test_assumption_wrong"}
         and repair_attempts.get(test_id, 0) < MAX_REPAIR_ATTEMPTS
+        and (prior_repair_statuses.get(test_id) or {}).get("status") != "REJECTED"
     }
 
     logger.info(
@@ -201,6 +286,7 @@ async def test_repair_node(state: TestPilotState) -> Dict[str, Any]:
 
     new_repair_attempts: Dict[str, int] = {}
     new_repaired_tests: Dict[str, list] = {}
+    new_repair_statuses: Dict[str, dict] = {}
     repaired_ids: List[str] = []
 
     for test_id, analysis in repairable_tests.items():
@@ -220,9 +306,10 @@ async def test_repair_node(state: TestPilotState) -> Dict[str, Any]:
         test_code = _find_test_code_by_id(test_id, generated_tests)
         exec_result = _find_execution_result(test_id, execution_results)
         page_insp = _find_page_inspection(test_id, test_plan, inspections, website_url)
+        intent = test_intents.get(test_id) or _derive_intent(test_id, test_plan)
 
         repair_context = _build_repair_prompt(
-            test_id, test_code, analysis, exec_result, page_insp
+            test_id, test_code, analysis, exec_result, page_insp, intent
         )
 
         try:
@@ -231,29 +318,45 @@ async def test_repair_node(state: TestPilotState) -> Dict[str, Any]:
             )
 
             if repaired_steps:
-                new_repaired_tests[test_id] = repaired_steps
-                repaired_ids.append(test_id)
-                logger.info(
-                    "Test repaired successfully",
-                    extra={
-                        "run_id": run_id,
-                        "test_id": test_id,
-                        "attempt": new_attempt_count,
-                        "repaired_steps_count": len(repaired_steps),
-                    }
-                )
+                ok, reason = _validate_repair_integrity(intent, repaired_steps, website_url)
+                if not ok:
+                    # The repair changed the test's SEMANTIC intent (e.g. deleted
+                    # the real flow and asserted something trivial). Reject it:
+                    # the test stays failed/unrepairable and is never re-executed.
+                    new_repair_statuses[test_id] = {"status": "REJECTED", "reason": reason}
+                    logger.warning(
+                        "Test repair rejected: intent changed",
+                        extra={"run_id": run_id, "test_id": test_id, "reason": reason}
+                    )
+                else:
+                    new_repaired_tests[test_id] = repaired_steps
+                    repaired_ids.append(test_id)
+                    new_repair_statuses[test_id] = {"status": "ACCEPTED", "reason": reason}
+                    new_repair_attempts[test_id] = new_attempt_count
+                    logger.info(
+                        "Test repaired successfully",
+                        extra={
+                            "run_id": run_id,
+                            "test_id": test_id,
+                            "attempt": new_attempt_count,
+                            "repaired_steps_count": len(repaired_steps),
+                        }
+                    )
             else:
+                # The LLM produced nothing. Consume an attempt so the repair loop
+                # still terminates via MAX_REPAIR_ATTEMPTS (a rejected repair is
+                # the only case that must NOT consume budget).
+                new_repair_attempts[test_id] = new_attempt_count
                 logger.warning(
                     "LLM returned insufficient repair data",
                     extra={"run_id": run_id, "test_id": test_id}
                 )
         except Exception as e:
+            new_repair_attempts[test_id] = new_attempt_count
             logger.error(
                 "Test repair failed",
                 extra={"run_id": run_id, "test_id": test_id, "error": str(e)}
             )
-
-        new_repair_attempts[test_id] = new_attempt_count
 
     summary = (
         f"Repaired {len(repaired_ids)} tests. "
@@ -262,6 +365,7 @@ async def test_repair_node(state: TestPilotState) -> Dict[str, Any]:
 
     result: Dict[str, Any] = {
         "repair_attempts": new_repair_attempts,
+        "repair_statuses": new_repair_statuses,
         "tests_to_execute": repaired_ids if repaired_ids else None,
         "status": "executing",
         "messages": [{"role": "assistant", "content": summary}],

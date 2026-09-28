@@ -97,10 +97,8 @@ def _find_page_inspection(route: str, inspections: list) -> dict:
 
 
 async def _llm_analyze_failure(context: str) -> Dict[str, Any]:
-    """Sends the failure context to the LLM for root cause classification."""
-    from app.llm import get_llm
-
-    llm = get_llm(temperature=0.1)
+    """Sends the failure context to the configured LLM for root cause classification."""
+    from app.services.llm.service import llm_service
 
     prompt = f"""You are a senior QA engineer analyzing a failed end-to-end Playwright test.
 
@@ -126,23 +124,7 @@ Return ONLY a JSON object with these exact keys:
 
 No markdown fences, no extra text."""
 
-    response = await llm.ainvoke(prompt)
-    content = response.content.strip()
-
-    if content.startswith("```"):
-        content = content.split("\n", 1)[1]
-        if content.endswith("```"):
-            content = content.rsplit("```", 1)[0]
-        content = content.strip()
-
-    try:
-        return json.loads(content)
-    except json.JSONDecodeError:
-        logger.warning(
-            "LLM returned non-JSON for failure analysis, using fallback",
-            extra={"raw_response": content[:200]}
-        )
-        return None
+    return await llm_service.invoke_json(prompt, expect="object", temperature=0.1)
 
 
 async def failure_analysis_node(state: TestPilotState) -> Dict[str, Any]:

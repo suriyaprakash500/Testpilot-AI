@@ -3,17 +3,13 @@ import uuid
 import logging
 from typing import Dict, List, Any
 from app.config import settings
+from app.core.singleton import Singleton
 
 logger = logging.getLogger("artifact-store")
 
-class ArtifactStore:
-    _instance = None
-
-    def __new__(cls):
-        if cls._instance is None:
-            cls._instance = super(ArtifactStore, cls).__new__(cls)
-            cls._instance.artifacts: Dict[str, List[Dict[str, Any]]] = {}
-        return cls._instance
+class ArtifactStore(Singleton):
+    def __init__(self) -> None:
+        self.artifacts: Dict[str, List[Dict[str, Any]]] = {}
 
     async def store_artifact(
         self,

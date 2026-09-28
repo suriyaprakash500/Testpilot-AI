@@ -7,17 +7,11 @@ from app.models import AuthSession
 from app.config import settings
 from app.auth.credential_store import credential_store
 from app.auth.session_cache import auth_session_cache
+from app.core.singleton import Singleton
 
 logger = logging.getLogger("auth-manager")
 
-class AuthManager:
-    _instance = None
-
-    def __new__(cls):
-        if cls._instance is None:
-            cls._instance = super(AuthManager, cls).__new__(cls)
-        return cls._instance
-
+class AuthManager(Singleton):
     async def get_or_authenticate_session(
         self,
         project_id: str,

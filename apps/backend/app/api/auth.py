@@ -61,8 +61,8 @@ async def get_current_user():
         "success": True,
         "data": {
             "id": "usr-1",
-            "name": "TestPilot Developer",
-            "email": "dev@testpilot.ai",
+            "name": "Verity Developer",
+            "email": "dev@verity.ai",
             "avatarUrl": "https://avatars.githubusercontent.com/u/1000000?v=4"
         }
     }

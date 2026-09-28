@@ -5,7 +5,7 @@ import asyncio
 from typing import Dict, Any
 from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException
-from app.graph.pipeline import run_pipeline
+from app.graph.pipeline import run_pipeline, _normalize_test_id
 from app import db
 
 logger = logging.getLogger("test-runs-router")
@@ -35,8 +35,14 @@ async def _execute_pipeline_and_update(project_id: str, run_id: str, website_url
         if generated_files:
             generated_code = generated_files[0].get("code", "")
 
+        # Per-case failure/repair provenance computed by run_pipeline, keyed by
+        # normalized test id (see app/graph/pipeline.py).
+        case_details = final_state.get("case_details") or {}
+
         # Write execution results as test cases
         for i, result in enumerate(final_state.get("execution_results") or []):
+            tid = _normalize_test_id(result.get("test_name", ""))
+            detail = case_details.get(tid) or {}
             db.insert_case({
                 "id": f"tc-{run_id[:8]}-{i}",
                 "testRunId": run_id,
@@ -48,6 +54,17 @@ async def _execute_pipeline_and_update(project_id: str, run_id: str, website_url
                 "code": generated_code,
                 "screenshotUrl": None,
                 "createdAt": _now_iso(),
+                # First-pass failure + repair provenance
+                "failedFirstPass": detail.get("failedFirstPass", 0),
+                "rootCause": detail.get("rootCause"),
+                "repairAttempts": detail.get("repairAttempts", 0),
+                "firstPassError": detail.get("firstPassError"),
+                "analysisNote": detail.get("analysisNote"),
+                "liveStatus": detail.get("liveStatus"),
+                # Repair-integrity verdict (ACCEPTED / REJECTED). Persisted only
+                # when the test_cases table carries the column; the DB layer
+                # ignores unknown keys, so no schema change is required here.
+                "repairStatus": detail.get("repairStatus"),
             })
 
         db.update_run(run_id, {
